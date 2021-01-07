@@ -6,7 +6,8 @@ from skimage import io, transform
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils
+import torchvision
+from torchvision import utils
 from torchvision.transforms import Normalize,CenterCrop,ToTensor,ColorJitter,Pad,RandomAffine,Resize,RandomCrop
 import pickle
 from tqdm import tqdm
@@ -18,7 +19,7 @@ def load_image(file):
     return np.array(Image.open(file).convert("RGB"))
 
 class BikeDataset(Dataset):
-    def __init__(self,root,memory=True,cache_dir = "./cache",transforms=[]):
+    def __init__(self,root,cache_dir,memory=True,transforms=[]):
         
         self.memory = memory
         self.images = []
@@ -76,20 +77,22 @@ class BikeDataset(Dataset):
 class BikeDataLoader(DataLoader):
 
     def __init__(self,root = "/scratch/datasets/raw",memory=False,batch_size=100,shuffle=True,num_workers=24,prefetch_factor=3,
-                    transforms = transforms.Compose([
+                    transforms = torchvision.transforms.Compose([
                                                         RandomCrop((256,256),pad_if_needed=True),
                                                         ToTensor()
                                                     ]),
-                    **kwargs):
-        
-        self.dataset = BikeDataset(root,memory=False,transforms=transforms)
-
+                    normalize=False,**kwargs):
+        cache_dir = "./cache"
+        if normalize:
+            self.load_normalization_constants(cache_dir)
+            self.dataset = BikeDataset(root,cache_dir,memory=memory,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]))
+        else:
+            self.dataset = BikeDataset(root,cache_dir,memory=memory,transforms=transforms)
         super().__init__(self.dataset,batch_size=batch_size,shuffle=shuffle,
                             num_workers=num_workers, prefetch_factor=prefetch_factor,
                             **kwargs)
 
     def compute_normalization_constants(self):
-        
         means = []
         stds = []
         for batch in tqdm(self):
@@ -106,22 +109,25 @@ class BikeDataLoader(DataLoader):
 
         with open(join(self.dataset.cache_dir,"normalization.txt"),"w") as f:
             f.write(",".join(means)+"\n"+",".join(stds)+"\n")
-        
+    
+    def load_normalization_constants(self,cache_dir="./cache"):
+        with open(join(cache_dir,"normalization.txt"),"r") as f:
+            data = [[float(x) for x in line.strip("\n").split(",")] for line in f.readlines()]
+            self.means = data[0]
+            self.stds = data[1]
+
 
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    dataloader = BikeDataLoader(transforms=transforms.Compose([
-                                                        RandomCrop((256,256),pad_if_needed=True),
-                                                        ToTensor()
-                                                    ]),prefetch_factor=2,batch_size=4096,num_workers=8)
+    dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=256,num_workers=16)
 
-    dataloader.compute_normalization_constants()
-    # for i,batch in enumerate(tqdm(dataloader)):
-    #     for img in batch:
-    #         fig,ax = plt.subplots(1,1)
-    #         ax.imshow(img.numpy().T)
-    #         plt.show()
+    for i,batch in enumerate(tqdm(dataloader)):
+        for img in batch:
+            pass
+            fig,ax = plt.subplots(1,1)
+            ax.imshow(img.numpy().T)
+            plt.show()
 
 
 # raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)
