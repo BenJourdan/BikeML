@@ -125,9 +125,9 @@ if __name__ == "__main__":
     for i,batch in enumerate(tqdm(dataloader)):
         for img in batch:
             pass
-            fig,ax = plt.subplots(1,1)
-            ax.imshow(img.numpy().T)
-            plt.show()
+            # fig,ax = plt.subplots(1,1)
+            # ax.imshow(img.numpy().T)
+            # plt.show()
 
 
 # raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)
