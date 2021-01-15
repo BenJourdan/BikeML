@@ -15,7 +15,7 @@ import sys
 sys.path.append('/home/c-abbott/BikeML/dataloaders')
 from dataloader import *
 
-def imshow(image, ax=None, title=None, normalize=True):
+def imshow(image, ax=None, title=None, normalize=True, input=True):
     """Imshow for Tensor."""
     if ax is None:
         fig, ax = plt.subplots()
@@ -31,7 +31,10 @@ def imshow(image, ax=None, title=None, normalize=True):
     ax.set_xticklabels('')
     ax.set_yticklabels('')
     plt.show()
-    plt.savefig('./test.png')
+    if input:
+        plt.savefig('./test_input.png')
+    else:
+        plt.savefig('./test_output.png')
 
 dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=1,num_workers=16, cache_dir="/home/c-abbott/BikeML/dataloaders/cache")
 image = next(iter(dataloader))
@@ -39,94 +42,94 @@ image = next(iter(dataloader))
 imshow(image)
 #create the model
 #VAE(input_height, enc_type='resnet18', first_conv=False, maxpool1=False, enc_out_dim=512, kl_coeff=0.1, latent_dim=256, lr=0.0001, **kwargs)
-model = VAE(input_height=256, enc_type='resnet18', pretrained='imagenet2012')
+model = VAE(input_height=256, enc_type='resnet18').from_pretrained('cifar10-resnet18')
 model.freeze()
 #print(VAE.pretrained_weights_available())
 #vae = vae.from_pretrained('cifar10-resnet18')
 
 # print(model)
-# num_params = sum([param.nelement() for param in model.parameters()])
-# print('Num Params: {}'.format(num_params))
+num_params = sum([param.nelement() for param in model.parameters()])
+print('Num Params: {}'.format(num_params))
 
 #pass the image through the model
 output = model(image) 
 output = output - torch.min(output)
 output = output / torch.max(output) 
-print(output)
+# print(output)
 
-#display the output
-imshow(output)
+# #display the output
+# imshow(output, input=False)
 
 # model = CPCV2(encoder='resnet18', pretrained='imagenet128')
 # resnet18_unsupervised = model.encoder.freeze()
 
-# def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
-#     since = time.time()
+def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    since = time.time()
 
-#     best_model_wts = copy.deepcopy(model.state_dict())
-#     best_acc = 0.0
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
 
-#     for epoch in range(num_epochs):
-#         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
-#         print('-' * 10)
+    for epoch in range(num_epochs):
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
 
-#         # Each epoch has a training and validation phase
-#         for phase in ['train', 'val']:
-#             if phase == 'train':
-#                 model.train()  # Set model to training mode
-#             else:
-#                 model.eval()   # Set model to evaluate mode
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
 
-#             running_loss = 0.0
-#             running_corrects = 0
+            running_loss = 0.0
+            running_corrects = 0
 
-#             # Iterate over data.
-#             for inputs, labels in dataloaders[phase]:
-#                 inputs = inputs.to(device)
-#                 labels = labels.to(device)
+            # Iterate over data.
+            for inputs, labels in dataloaders[phase]:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
 
-#                 # zero the parameter gradients
-#                 optimizer.zero_grad()
+                # zero the parameter gradients
+                optimizer.zero_grad()
 
-#                 # forward
-#                 # track history if only in train
-#                 with torch.set_grad_enabled(phase == 'train'):
-#                     outputs = model(inputs)
-#                     _, preds = torch.max(outputs, 1)
-#                     loss = criterion(outputs, labels)
+                # forward
+                # track history if only in train
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
 
-#                     # backward + optimize only if in training phase
-#                     if phase == 'train':
-#                         loss.backward()
-#                         optimizer.step()
+                    # backward + optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
 
-#                 # statistics
-#                 running_loss += loss.item() * inputs.size(0)
-#                 running_corrects += torch.sum(preds == labels.data)
-#             if phase == 'train':
-#                 scheduler.step()
+                # statistics
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+            if phase == 'train':
+                scheduler.step()
 
-#             epoch_loss = running_loss / dataset_sizes[phase]
-#             epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
-#             print('{} Loss: {:.4f} Acc: {:.4f}'.format(
-#                 phase, epoch_loss, epoch_acc))
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(
+                phase, epoch_loss, epoch_acc))
 
-#             # deep copy the model
-#             if phase == 'val' and epoch_acc > best_acc:
-#                 best_acc = epoch_acc
-#                 best_model_wts = copy.deepcopy(model.state_dict())
+            # deep copy the model
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
 
-#         print()
+        print()
 
-#     time_elapsed = time.time() - since
-#     print('Training complete in {:.0f}m {:.0f}s'.format(
-#         time_elapsed // 60, time_elapsed % 60))
-#     print('Best val Acc: {:4f}'.format(best_acc))
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
 
-#     # load best model weights
-#     model.load_state_dict(best_model_wts)
-#     return model
+    # load best model weights
+    model.load_state_dict(best_model_wts)
+    return model
 
 
 # num_ftrs = model_ft.fc.in_features
