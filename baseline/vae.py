@@ -1,5 +1,4 @@
 from __future__ import print_function, division
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,13 +11,16 @@ import time
 import os
 import copy
 from pl_bolts.models.autoencoders import VAE
-from dataloaders import dataloader
+import sys
+sys.path.append('/home/c-abbott/BikeML/dataloaders')
+from dataloader import *
 
 def imshow(image, ax=None, title=None, normalize=True):
     """Imshow for Tensor."""
     if ax is None:
         fig, ax = plt.subplots()
-    image = image.numpy().transpose((1, 2, 0))
+    image = np.squeeze(image)
+    image = image.numpy().transpose(1,2,0)
 
     ax.imshow(image)
     ax.spines['top'].set_visible(False)
@@ -28,28 +30,29 @@ def imshow(image, ax=None, title=None, normalize=True):
     ax.tick_params(axis='both', length=0)
     ax.set_xticklabels('')
     ax.set_yticklabels('')
+    plt.show()
+    plt.savefig('./test.png')
 
-    return ax
-
-dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=1,num_workers=16)
+dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=1,num_workers=16, cache_dir="/home/c-abbott/BikeML/dataloaders/cache")
 image = next(iter(dataloader))
-
 #display the image
-imshow(image[0])
-
+imshow(image)
 #create the model
 #VAE(input_height, enc_type='resnet18', first_conv=False, maxpool1=False, enc_out_dim=512, kl_coeff=0.1, latent_dim=256, lr=0.0001, **kwargs)
-model = VAE(input_height=256, first_conv=True, pretrained='imagenet2012')
+model = VAE(input_height=256, enc_type='resnet18', pretrained='imagenet2012')
 model.freeze()
 #print(VAE.pretrained_weights_available())
 #vae = vae.from_pretrained('cifar10-resnet18')
 
-print(vae)
-num_params = sum([param.nelement() for param in vae.parameters()])
-print('Num Params: {}'.format(num_params))
+# print(model)
+# num_params = sum([param.nelement() for param in model.parameters()])
+# print('Num Params: {}'.format(num_params))
 
 #pass the image through the model
-output = vae(images[0])
+output = model(image) 
+output = output - torch.min(output)
+output = output / torch.max(output) 
+print(output)
 
 #display the output
 imshow(output)

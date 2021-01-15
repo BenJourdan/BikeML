@@ -81,8 +81,8 @@ class BikeDataLoader(DataLoader):
                                                         RandomCrop((256,256),pad_if_needed=True),
                                                         ToTensor()
                                                     ]),
-                    normalize=False,**kwargs):
-        cache_dir = "./cache"
+                    normalize=False, cache_dir="./cache", **kwargs):
+        
         if normalize:
             self.load_normalization_constants(cache_dir)
             self.dataset = BikeDataset(root,cache_dir,memory=memory,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]))
