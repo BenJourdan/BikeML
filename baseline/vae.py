@@ -36,8 +36,13 @@ def imshow(image, ax=None, title=None, normalize=True, input=True):
     else:
         plt.savefig('./test_output.png')
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
+
 dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=1,num_workers=16, cache_dir="/home/c-abbott/BikeML/dataloaders/cache")
 image = next(iter(dataloader))
+
+image.to(device)
 #display the image
 imshow(image)
 #create the model
@@ -52,11 +57,14 @@ num_params = sum([param.nelement() for param in model.parameters()])
 print('Num Params: {}'.format(num_params))
 
 #pass the image through the model
+model.to(device)
+image = image.to(device)
+print(image.device)
 output = model(image) 
 output = output - torch.min(output)
 output = output / torch.max(output) 
 # print(output)
-
+print("hereasdf")
 # #display the output
 # imshow(output, input=False)
 
