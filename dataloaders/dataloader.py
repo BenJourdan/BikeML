@@ -14,69 +14,122 @@ from tqdm import tqdm
 from PIL import Image
 from multiprocessing import Pool
 import numpy as np
+from math import comb, floor
+from collections import OrderedDict
+from itertools import combinations as combs
+
 
 def load_image(file):
+    '''
+        Loads an image into numpy array and converts to
+        RGB format.
+    '''
     return np.array(Image.open(file).convert("RGB"))
-
+ 
 class BikeDataset(Dataset):
-    def __init__(self,root,cache_dir,memory=True,transforms=[]):
-        
-        self.memory = memory
-        self.images = []
-        self.files  = None
+    def __init__(self,root,data_set_size,balance=0.5,transforms=[],cache_dir="./cache"):
+        # Number of images from same ad (labelled 1)
+        self.num_same_ad = floor(data_set_size * balance)
+        # Number of images from diff ads (labelled 0)
+        self.num_diff_ad = floor(data_set_size * (1 - balance))
+        self.root = root # (root is /scratch/datasets/raw)
+
+        self.same_ad_filenames = []
+        # Example
+        # same_ad_filenames[0] = ('root///img1.jpg', 'root///img2.jpg')
+        self.diff_ad_filenames = []
 
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
-
         self.cache_dir = cache_dir
-        if self.memory:
-            if os.path.exists(join(cache_dir,"images.p")):
-                self.images = pickle.loads(open(join(cache_dir,"images.p"),"rb"))
-            else:
-                files = [os.path.join(dp, f) for dp, dn, fn in os.walk(os.path.expanduser(root)) for f in fn if "jpg" in f]
 
-                with Pool(16) as pool:
-                    for i,file in enumerate(files):
-                        print(i)
-                        self.images.append(load_image(file))
-                    # self.images = pool.map(load_image,files)
-                pickle.dumps(self.images,open(join(cache_dir,"images.p"),"wb"))
-
+        if os.path.exists(join(cache_dir,"same_ad_filenames.txt")):
+                with open(join(cache_dir,"same_ad_filenames.txt"),"r") as f:
+                    self.same_ad_filenames = f.read().split("\n")
         else:
-            if os.path.exists(join(cache_dir,"filenames.txt")):
-                with open(join(cache_dir,"filenames.txt"),"r") as f:
-                    self.files = f.read().split("\n")
-            else:
-                self.files = [os.path.join(dp, f) for dp, dn, fn in os.walk(os.path.expanduser(root)) for f in fn if "jpg" in f]
-                with open(join(cache_dir,"filenames.txt"),"w") as f:
-                    f.write("\n".join(self.files)+"\n")
-            self.files = [x for x in self.files if x!=""]
-        
-        self.transforms = transforms
+            self.populate_same_ad_filename_list()
+            with open(join(cache_dir,"same_ad_filenames.txt"),"w") as f:
+                f.write("\n".join(self.same_ad_filenames)+"\n")
+                
+        if os.path.exists(join(cache_dir,"diff_ad_filenames.txt")):
+            with open(join(cache_dir,"diff_ad_filenames.txt"),"r") as f:
+                    self.diff_ad_filenames = f.read().split("\n")
+        else:
+            self.populate_diff_ad_filename_list()
+            with open(join(cache_dir,"diff_ad_filenames.txt"),"w") as f:
+                f.write("\n".join(self.diff_ad_filenames)+"\n")
+
+
+        #work out total number of valid "same" ad. Aka ads with 2 or more images
+
+
 
         
+        pass
 
     def __len__(self):
-        if self.memory:
-            return len(self.images)
-        else:
-            return len(self.files)
+        pass
 
     def __getitem__(self,idx):
-        try:
-            if self.memory:
-                return self.transforms(self.images[idx])
-            else:
-                return self.transforms(Image.open(self.files[idx]).convert("RGB"))
-        except Exception as e:
-            print(idx)
-            print(e)
-            raise Exception(f"opps {idx},{self.files[idx]}")
+        pass
+    
 
+    def populate_same_ad_filename_list(self):
+        # self.num_same_ad
+        # Key: Ad filepath 
+        # Value: List of image names
+        ad_to_img_pairs = OrderedDict()
+
+        # Looping over ad filenames
+        for date in os.listdir(self.root):
+            for hour in os.listdir(join(self.root,date)):
+                for ad_filepath in os.listdir(join(self.root,date,hour)):
+                    imgs = self.imgs_from_ad(join(self.root,date,hour,ad_filepath))
+                    # Check if valid ad
+                    if imgs:
+                        # Add to dict list of image pairs
+                        ad_to_img_pairs[ad_filepath] = list(map(lambda x: (join(self.root,date,hour,ad_filepath,x[0]),join(self.root,date,hour,ad_filepath,x[1])) ,list(combs(imgs,2))))
+
+        # Num of img pairs per ad
+        combinations = [len(ad_imgs_combs) for ad_imgs_combs in ad_to_img_pairs.values()]
+        cdf = np.cumsum(np.array(combinations))
+        n = cdf.tolist()[-1]
+
+        # Sampling num_same_ad img pairs from n possible img pairs
+        all_ad_img_pairs = list(ad_to_img_pairs.values())
+        for i in range(self.num_same_ad):
+            
+            # Grab random pair index
+            global_pair_idx = np.random.randint(0, n)
+            ad_idx = cdf[cdf<=global_pair_idx].shape[0]-1
+            
+            # Computing img pair index from comb_idx
+            if ad_idx >= 0:
+                local_pair_idx = global_pair_idx - cdf[ad_idx]
+            else:
+                local_pair_idx = global_pair_idx
+            # Grabbing imgs pairs from random ad
+            ad_img_pairs = all_ad_img_pairs[ad_idx+1]
+            # Store the single image pair
+            self.same_ad_filenames.append(ad_img_pairs[local_pair_idx])
+    
+    def populate_diff_ad_filename_list(self):
+
+        pass
+
+    def imgs_from_ad(self,filepath):
+        """
+        Input: filepath of an ad
+        Output: the number of distinct bike images in that ad
+        """
+        print(filepath)
+        images = [x for x in os.listdir(filepath) if x[-3:]=="jpg"]
+        num_images = len(images)
+        return False if num_images < 2 else images
 
 class BikeDataLoader(DataLoader):
 
-    def __init__(self,root = "/scratch/datasets/raw",memory=False,batch_size=100,shuffle=True,num_workers=24,prefetch_factor=3,
+    def __init__(self,root = "/scratch/datasets/raw/",memory=False,batch_size=100,shuffle=True,num_workers=24,prefetch_factor=3,
                     transforms = torchvision.transforms.Compose([
                                                         RandomCrop((256,256),pad_if_needed=True),
                                                         ToTensor()
@@ -120,14 +173,20 @@ class BikeDataLoader(DataLoader):
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=256,num_workers=16)
 
-    for i,batch in enumerate(tqdm(dataloader)):
-        for img in batch:
-            pass
-            # fig,ax = plt.subplots(1,1)
-            # ax.imshow(img.numpy().T)
-            # plt.show()
+    dataset = BikeDataset(root="/scratch/datasets/raw",data_set_size=10000,balance=0.5,transforms=[],cache_dir="./cache")
+
+    splat = dataset.same_ad_filenames[0]
+    
+    print(splat)
+    # dataloader = BikeDataLoader(normalize=True,prefetch_factor=3,batch_size=256,num_workers=16)
+
+    # for i,batch in enumerate(tqdm(dataloader)):
+    #     for img in batch:
+    #         pass
+    #         # fig,ax = plt.subplots(1,1)
+    #         # ax.imshow(img.numpy().T)
+    #         # plt.show()
 
 
 # raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)
