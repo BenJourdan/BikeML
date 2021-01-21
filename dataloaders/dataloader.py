@@ -45,11 +45,11 @@ class BikeDataset(Dataset):
 
         if os.path.exists(join(cache_dir,"same_ad_filenames.txt")):
                 with open(join(cache_dir,"same_ad_filenames.txt"),"r") as f:
-                    self.same_ad_filenames = f.read().split("\n")
+                    self.same_ad_filenames = [tuple(x.split(","))for x in f.read().split("\n")]
         else:
             self.populate_same_ad_filename_list()
             with open(join(cache_dir,"same_ad_filenames.txt"),"w") as f:
-                f.write("\n".join(self.same_ad_filenames)+"\n")
+                f.write("\n".join([f"{x[0]},{x[1]}" for x in self.same_ad_filenames])+"\n")
                 
         if os.path.exists(join(cache_dir,"diff_ad_filenames.txt")):
             with open(join(cache_dir,"diff_ad_filenames.txt"),"r") as f:
@@ -97,10 +97,11 @@ class BikeDataset(Dataset):
 
         # Sampling num_same_ad img pairs from n possible img pairs
         all_ad_img_pairs = list(ad_to_img_pairs.values())
+        global_pair_arr = np.arange(0, n) # lists all possible global pair indices from 0 to n
+    
         for i in range(self.num_same_ad):
-            
             # Grab random pair index
-            global_pair_idx = np.random.randint(0, n)
+            global_pair_idx_ = np.random.choice(global_pair_arr, replace=False) # sample from the global pair indices without replacement
             ad_idx = cdf[cdf<=global_pair_idx].shape[0]-1
             
             # Computing img pair index from comb_idx
@@ -175,7 +176,7 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     dataset = BikeDataset(root="/scratch/datasets/raw",data_set_size=10000,balance=0.5,transforms=[],cache_dir="./cache")
-
+    
     splat = dataset.same_ad_filenames[0]
     
     print(splat)
