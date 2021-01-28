@@ -29,7 +29,7 @@ def load_image(file):
     '''
     return np.array(Image.open(file).convert("RGB"))
 
-#Defines a SquarePad class to centre and pad the images
+# Defines a SquarePad class to centre and pad the images
 class SquarePad:
 	def __call__(self, image):
 		w, h = image.size
@@ -116,9 +116,6 @@ class BikeDataset(Dataset):
         # transforms
         self.transform = transforms
 
-
-
-
     def __len__(self):
         return self.num_same_ad + self.num_diff_ad
 
@@ -202,7 +199,7 @@ class BikeDataset(Dataset):
         global_arr = np.arange(0, n) # lists all possible global pair indices from 0 to n
         np.random.shuffle(global_arr)
 
-        #Check that the number of different pairs requested is not larger than the dataset
+        # Check that the number of different pairs requested is not larger than the dataset
         if self.num_diff_ad > n/2:
             raise ValueError('num_diff_ad variable ({}) exceeds the number of different-ad images ({})'.format(self.num_diff_ad,n))
         
@@ -221,6 +218,8 @@ class BikeDataset(Dataset):
             # !------ COLLISION -------!
             # Are the images from the same ad?
             collision_count = -1
+            # Pairwise swap adjacent indices of global_arr to prevent the collision
+            # Keeps going until we no longer collide
             while ad_idx_1 == ad_idx_2:
                 collision_count += 1
                 print(f'Sampling collision at index: {ad_idx_1}')
@@ -257,9 +256,6 @@ class BikeDataset(Dataset):
         num_images = len(images)
         return False if num_images < 2 else images
 
-
-
-
 class BikeDataLoader(DataLoader):
 
     def __init__(self,root = "/scratch/datasets/raw/",batch_size=100,shuffle=True,num_workers=24,prefetch_factor=3,
@@ -268,11 +264,22 @@ class BikeDataLoader(DataLoader):
                                                         Resize((256,256)),
                                                         ToTensor(),
                                                     ]),
-                    normalize=False, cache_dir="./cache",
+                    normalize=True, cache_dir="./cache",
                     data_set_size = 10000,
                     balance = 0.5,
+                    data_set_type = None,
                     **kwargs):
         
+        if data_set_type == 'train':
+            cache_dir = join(root,f"cache_train")
+            root = "/scratch/datasets/raw/train"
+        elif data_set_type == 'val':
+            cache_dir = join(root,f"cache_val")
+            root = "/scratch/datasets/raw/val"
+        elif data_set_type == 'test':
+            cache_dir = join(root,f"cache_test")
+            root = "/scratch/datasets/raw/test"
+    
         if normalize:
             self.load_normalization_constants(cache_dir)
             self.dataset = BikeDataset(root,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]),cache_dir=cache_dir)
@@ -322,12 +329,17 @@ if __name__ == "__main__":
     #                                                 ]),cache_dir="./cache")
     
 
-    dataloader = BikeDataLoader(data_set_size=200000,balance=0.5,normalize=True,prefetch_factor=2,batch_size=256,num_workers=28)
+    dataloader = BikeDataLoader(data_set_type="train",data_set_size=200000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=28,
+                                    transforms = torchvision.transforms.Compose([
+                                                        SquarePad(),
+                                                        Resize((512,512)),
+                                                        ToTensor(),
+                                                    ]))
 
-    # dataloader.compute_normalization_constants()
+    dataloader.compute_normalization_constants()
 
-    for i,batch in enumerate(tqdm(dataloader)):
-        a,b,l = batch
+    # for i,batch in enumerate(tqdm(dataloader)):
+    #     a,b,l = batch
 
 
 # raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)

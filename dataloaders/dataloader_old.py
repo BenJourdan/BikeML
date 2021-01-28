@@ -15,6 +15,8 @@ from PIL import Image
 from multiprocessing import Pool
 import numpy as np
 
+
+
 def load_image(file):
     return np.array(Image.open(file).convert("RGB"))
 
