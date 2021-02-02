@@ -40,7 +40,7 @@ class SquarePad:
 		return F.pad(image, padding, 0, 'constant')
  
 class BikeDataset(Dataset):
-    def __init__(self,root,data_set_size,balance=0.5,transforms=None,cache_dir="./cache"):
+    def __init__(self,root,data_set_size,balance=0.5,transforms=None,cache_dir="./cache",half=True):
         # Number of images from same ad (labelled 1)
         self.num_same_ad = floor(data_set_size * balance)
         # Number of images from diff ads (labelled 0)
@@ -54,7 +54,7 @@ class BikeDataset(Dataset):
 
         self.ad_to_img = OrderedDict()
         self.ad_to_img_pairs = OrderedDict()
-
+        self.half = half
 
         # check if cache folder exists
         if not os.path.exists(cache_dir):
@@ -126,14 +126,17 @@ class BikeDataset(Dataset):
         if idx < self.num_same_ad:
             image_a = self.transform(Image.open(self.same_ad_filenames[idx][0]).convert("RGB"))
             image_b = self.transform(Image.open(self.same_ad_filenames[idx][1]).convert("RGB"))
-            label = 1.0
+            label[0] = 1.0
         else:
             actual_idx = idx - self.num_same_ad
             image_a = self.transform(Image.open(self.diff_ad_filenames[actual_idx][0]).convert("RGB"))
             image_b = self.transform(Image.open(self.diff_ad_filenames[actual_idx][1]).convert("RGB"))
-            label = 0.0
+            label[0] = 0.0
         
-        return  image_a,image_b,label
+        if self.half==True:
+            return  image_a.half(),image_b.half(),label.half()
+        else:
+            return  image_a.float(),image_b.float(),label.float()
     
     def populate_ad_to_img_dicts(self):
         # Key: Ad filepath 
@@ -251,7 +254,6 @@ class BikeDataset(Dataset):
         Input: filepath of an ad
         Output: the number of distinct bike images in that ad
         """
-        print(filepath)
         images = [x for x in os.listdir(filepath) if x[-3:]=="jpg"]
         num_images = len(images)
         return False if num_images < 2 else images
@@ -268,23 +270,28 @@ class BikeDataLoader(DataLoader):
                     data_set_size = 10000,
                     balance = 0.5,
                     data_set_type = None,
+                    data_splits = {'train': 50/60, 'val': 5/60, 'test': 5/60},
+                    half=False,
                     **kwargs):
         
         if data_set_type == 'train':
             cache_dir = join(root,f"cache_train")
             root = "/scratch/datasets/raw/train"
+            data_set_size *= data_splits['train']
         elif data_set_type == 'val':
             cache_dir = join(root,f"cache_val")
             root = "/scratch/datasets/raw/val"
+            data_set_size *= data_splits['val']
         elif data_set_type == 'test':
             cache_dir = join(root,f"cache_test")
             root = "/scratch/datasets/raw/test"
+            data_set_size *= data_splits['test']
     
         if normalize:
             self.load_normalization_constants(cache_dir)
-            self.dataset = BikeDataset(root,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]),cache_dir=cache_dir)
+            self.dataset = BikeDataset(root,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]),cache_dir=cache_dir,half=half)
         else:
-            self.dataset = BikeDataset(root,data_set_size,balance,transforms=transforms,cache_dir=cache_dir)
+            self.dataset = BikeDataset(root,data_set_size,balance,transforms=transforms,cache_dir=cache_dir,half=half)
         super().__init__(self.dataset,batch_size=batch_size,shuffle=shuffle,
                             num_workers=num_workers, prefetch_factor=prefetch_factor,
                             **kwargs)
@@ -314,9 +321,7 @@ class BikeDataLoader(DataLoader):
             data = [[float(x) for x in line.strip("\n").split(",")] for line in f.readlines()]
             self.means = data[0]
             self.stds = data[1]
-        
-        
-
+    
 
 
 if __name__ == "__main__":

@@ -1,25 +1,14 @@
-import os
-from os.path import join
 import torch
-from skimage import io, transform
-import numpy as np
-import matplotlib.pyplot as plt
-from torchvision import utils
-import torchvision.models as models
-import json
-from tqdm import tqdm
-from PIL import Image
-from multiprocessing import Pool
-from math import comb, floor
-from collections import OrderedDict
-from time import time
-
-from math import floor
 import torch.nn as nn
-import torch.nn.functional as F
+import torchvision.models as models
+from math import floor
+import wandb
+import matplotlib.pyplot as plt
+from torch.nn import functional as F
 
-
-
+import os,sys
+sys.path.append("/scratch/GIT/BikeML")
+from baseline.baseline import Baseline
 
 class ModelSnipper(nn.Module):
     def __init__(self, original_model,snip=1):
@@ -30,8 +19,8 @@ class ModelSnipper(nn.Module):
         x = self.features(x)
         return x
 
-class BaselineModel_1a(nn.Module):
-    def __init__(self, input_shape,mlp_layers):
+class BaselineModel_1a(Baseline):
+    def __init__(self, input_shape=None,mlp_layers=None,**kwargs):
         super(BaselineModel_1a, self).__init__()
         
         self.input_shape = input_shape
@@ -39,6 +28,7 @@ class BaselineModel_1a(nn.Module):
         self.components = nn.ModuleDict() 
 
         self.build_network()
+
 
     def build_network(self):
         x = torch.zeros((self.input_shape))
@@ -54,8 +44,6 @@ class BaselineModel_1a(nn.Module):
         out_x = backbone(x)
         out_y = backbone(y)
 
-        print(out_x.shape, out_y.shape)
-        
         xy = torch.cat((torch.flatten(out_x, start_dim=1, end_dim=-1),torch.flatten(out_y, start_dim=1, end_dim=-1)),dim=1)
 
         for i in range(self.mlp_layers):
@@ -95,10 +83,9 @@ class BaselineModel_1a(nn.Module):
             except:
                 pass
 
-
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    
     model = BaselineModel_1a((200,3,512,512),3)
     
     model.to(device)

@@ -104,6 +104,7 @@ class ExperimentBuilder(nn.Module):
         super(ExperimentBuilder, self).__init__()
 
 
+
         self.experiment_name = experiment_name
         self.model = network_model
 

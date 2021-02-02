@@ -30,18 +30,22 @@ class EmbeddingNetwork(nn.Module):
         x = torch.zeros((self.input_shape))
         # Setup ResNet feature extractor and loss
         resnet = models.resnet18(pretrained=True)
-        backbone  = ModelSnipper(resnet, snip=2)
-        print(backbone)
+        backbone  = ModelSnipper(resnet, snip=1)
         for param in backbone.parameters():
             param.requires_grad = False
         self.components["backbone"] = backbone
 
         x = backbone(x)
-        print(x.shape)
+        x = torch.flatten(x, start_dim=1, end_dim=-1)
 
         shape_ratio = x.shape[1]/self.embedding_dimension
         layer_ratio = shape_ratio**(1/self.mlp_layers)
+        print(shape_ratio)
+        print(layer_ratio)
         for i in range(self.mlp_layers):
+            print(i)
+            print(x.shape)
+            
             self.components['fcc_{}'.format(i)] = nn.Linear(in_features=x.shape[1],
                        out_features=floor(x.shape[1]/layer_ratio))
             x = self.components['fcc_{}'.format(i)](x)
@@ -51,11 +55,11 @@ class EmbeddingNetwork(nn.Module):
         
     def forward(self,x):
         x = self.components["backbone"](x)
-                
+        x = torch.flatten(x, start_dim=1, end_dim=-1)
         for i in range(self.mlp_layers):
             x = self.components['fcc_{}'.format(i)](x)
             x = self.components['bn_{}'.format(i)](x)
-            x = F.leaky_relu(out_xy, negative_slope=0.01)
+            x = F.leaky_relu(x, negative_slope=0.01)
         
         return x
 
@@ -71,11 +75,10 @@ class EmbeddingNetwork(nn.Module):
 
     
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = EmbeddingNetwork((200,3,512,512),3, 128)
-    
-    model.to(device)
+    print(model)
 
     for value in model.components.values():
         print(value)
