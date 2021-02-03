@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import os,sys
 sys.path.append("/scratch/GIT/BikeML")
 from baseline.experiment_building import ExperimentBuilder
-from baseline.model_1a import BaselineModel_1a
+from baseline.BaselineModel_1a import BaselineModel_1a
 
 from dataloaders.dataloader import  BikeDataLoader
 
@@ -32,6 +32,8 @@ class UnNormalize(object):
             # The normalize code -> t.sub_(m).div_(s)
         return tensor
 
+
+ 
 
 if __name__ == "__main__":
     #TODO: write a get_args script to pull the seed from the command line
@@ -85,4 +87,3 @@ if __name__ == "__main__":
     # train_data=train_data_loader, val_data=val_data_loader, test_data=test_data_loader,learning_rate=0.01,weight_decay_coefficient=0)
 
     # experiment_metrics, test_metrics = experiment.run_experiment()
-

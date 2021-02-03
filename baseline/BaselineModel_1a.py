@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 from math import floor
-import wandb
 import matplotlib.pyplot as plt
 from torch.nn import functional as F
 
 import os,sys
 sys.path.append("/scratch/GIT/BikeML")
-from baseline.baseline import Baseline
+from baseline.Scaffold import Scaffold
+import wandb
 
 class ModelSnipper(nn.Module):
     def __init__(self, original_model,snip=1):
@@ -19,7 +19,7 @@ class ModelSnipper(nn.Module):
         x = self.features(x)
         return x
 
-class BaselineModel_1a(Baseline):
+class BaselineModel_1a(Scaffold):
     def __init__(self, input_shape=None,mlp_layers=None,**kwargs):
         super(BaselineModel_1a, self).__init__()
         

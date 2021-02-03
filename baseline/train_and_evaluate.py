@@ -1,14 +1,13 @@
-
 import numpy as np
 import torch
 import torch.nn as nn
 import os,sys
 sys.path.append("/scratch/GIT/BikeML")
-from baseline.model_1b import BaselineModel_1b
+from baseline.BaselineModel_1b import BaselineModel_1b
 from config import hyperparameters
 from baseline.experiment_building import ExperimentBuilder
 from baseline.analysis import UnNormalize
-from baseline.model_1a import BaselineModel_1a
+from baseline.BaselineModel_1a import BaselineModel_1a
 from os.path import join
 from dataloaders.dataloader import BikeDataLoader
 import wandb
@@ -17,10 +16,26 @@ import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 from torch.optim import Adam
 
+
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+import os,sys
+sys.path.append("/scratch/GIT/BikeML")
+from baseline.experiment_building import ExperimentBuilder
+from baseline.BaselineModel_1a import BaselineModel_1a
+
+from dataloaders.dataloader import  BikeDataLoader
+
+from matplotlib.font_manager import FontProperties
+
 prop = FontProperties(fname="NotoColorEmoji.tff")
 plt.rcParams['font.family'] = prop.get_family()
 
 
+prop = FontProperties(fname="NotoColorEmoji.tff")
+plt.rcParams['font.family'] = prop.get_family()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def optimizer_to(optim, device):
@@ -50,9 +65,8 @@ def model_pipeline(hyperparameters):
         model, train_loader, val_loader, test_loader, criterion, optimizer = make(config,hyperparameters)
         # and use them to train the model
         train(model, train_loader, val_loader, criterion, optimizer, config)
-
         # and test its final performance
-        evaluate(model,optimizer,test_loader,criterion,dataset='test')
+        evaluate(model,optimizer,test_loader,criterion,dataset='test',hyperparameters=hyperparameters)
         return model
 
 def make(config,hyperparameters):
@@ -69,7 +83,10 @@ def make(config,hyperparameters):
     criterion = hyperparameters["criterion"]()
     optimizer = Adam(model.parameters(),lr=config.lr, weight_decay=config.weight_decay)
 
-    #load weights and optimizer state if continuing:
+
+    #learning_rate_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs,eta_min=0.00002)
+
+    # load weights and optimizer state if continuing:
     if config.starting_epoch>0:
         path = config.project_path
         checkpoint = torch.load(join(path,"models",f"model_{config.starting_epoch}.tar"))
@@ -80,7 +97,7 @@ def make(config,hyperparameters):
         g['lr'] = config.lr
         g["weight_decay"] = config.weight_decay
 
-    #make weights half precision if told to
+    # make weights half precision if told to
     if config.half_precision:
         model.half()  # convert to half precision
         #make sure bn layers are floats for stability
@@ -103,56 +120,55 @@ def train(model, train_loader, val_loader, criterion, optimizer, config):
     example_ct = 0  # number of examples seen
     batch_ct = 0
 
-    model_type = type(model)
+
 
     for epoch in range(config.starting_epoch,config.epochs):
         model.train()
         with tqdm(total=len(train_loader),ncols=160) as pbar_train:
             for data in train_loader:
-                loss,outputs = train_batch(data, model, optimizer, criterion, model_type)
+                loss,outputs = train_batch(data, model, optimizer, criterion)
                 example_ct +=  data[0].shape[0]
                 batch_ct += 1
                 # Report metrics every batch
-                #TODO: Change this so that its not every batch
-                accuracy = model.train_compute_accuracy(outputs)
+                accuracy = model.train_compute_acc(outputs)
                 train_log(loss, accuracy, example_ct, epoch)
                 pbar_train.update(1)
                 pbar_train.set_description(f" Epoch: {epoch} loss: {loss:.4f}, accuracy: {accuracy:.4f}")
         #validate
-        evaluate(model,optimizer,val_loader,criterion,dataset='val',path=config.project_path,epoch=epoch)
+        evaluate(model,optimizer,val_loader,criterion,dataset='val',path=config.project_path,epoch=epoch, hyperparameters=hyperparameters)
 
 
-def train_batch(data, model, optimizer, criterion, model_type):
-    loss = model.train_batch(data, criterion, device, model)
+def train_batch(data, model, optimizer, criterion):
+    loss, outputs, labels = model.train_batch(data, criterion, device, model)
 
     # Backward pass ⬅
     optimizer.zero_grad()
     loss.backward()
     # Step with optimizer
+    #learning_rate_scheduler.step()
     optimizer.step()
     return loss, [outputs, labels]
 
 def train_log(loss,accuracy, example_ct, epoch):
     wandb.log({"epoch": epoch, "loss": float(loss),"accuracy":accuracy}, step=example_ct)
 
-def evaluate(model,optimizer, loader, criterion, dataset,path=None,epoch=None):
+def evaluate(model,optimizer, loader, criterion, dataset, hyperparameters, path=None,epoch=None):
     model.eval() 
-    model_type = type(model)
     # Run the model on some test examples
     accuracies = []
     losses = []
-
 
     viz_flag =  True
     with torch.no_grad():
         
         for data in loader:
-            loss, accuracy, outputs = model.evaluate_batch(data, criterion, model, device)
+            loss, accuracy, outputs = model.evaluate_batch(data, criterion, device, model)
             if viz_flag:
-                plot = model.visualize(data,outputs,epoch,unNormalizer = UnNormalize(loader.means,loader.stds),figures_to_store=4)
-                viz_flag = False
-                if plot != False:
-                    wandb.log({"examples":plot})
+                model.visualize(data,
+                                        outputs,
+                                        epoch,
+                                        number_of_figures=hyperparameters["number_of_figures"],
+                                        unNormalizer = UnNormalize(loader.means,loader.stds))
             losses.append(loss)
             accuracies.append(accuracy)
 
@@ -170,9 +186,6 @@ def evaluate(model,optimizer, loader, criterion, dataset,path=None,epoch=None):
             "model_state_dict":model.state_dict(),
             "optimizer_state_dict":optimizer.state_dict()
         },join(path,"models",f"model_{epoch}.tar"))
-
-
-
 
 if __name__ == "__main__":
     # login to wandb:

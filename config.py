@@ -2,8 +2,8 @@ from loss_functions import SupervisedContrastiveLoss
 import os,sys
 from os.path import join
 sys.path.append("/scratch/GIT/BikeML")
-from baseline.model_1a import BaselineModel_1a
-from baseline.model_1b import BaselineModel_1b
+from baseline.BaselineModel_1a import BaselineModel_1a
+from baseline.BaselineModel_1b import BaselineModel_1b
 from dataloaders.dataloader import BikeDataLoader
 from dataloaders.dataloader import SquarePad
 import torch
@@ -16,18 +16,19 @@ base_config = dict(
     lr = 0.001,
     weight_decay = 0.000001,
     image_dim = 512,
-    starting_epoch = 7,
+    starting_epoch = 14,
+    number_of_figures = 16,
     half_precision = False
 )
 
 dataloader_params = dict(
-    data_set_size = 500000,
+    data_set_size = 1000,
     data_splits = {"train":50/60,"val": 5/60,"test":5/60},
     normalize = True,
     balance = 0.5,
     num_workers = 32,
     prefetch_factor=1,
-    batch_size = 256,
+    batch_size = 210,
     transforms = torchvision.transforms.Compose([
                                                 SquarePad(),
                                                 Resize((base_config["image_dim"],base_config["image_dim"])),

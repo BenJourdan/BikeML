@@ -5,7 +5,7 @@ from EmbeddingNetwork import EmbeddingNetwork
 
 import os,sys
 sys.path.append("/scratch/GIT/BikeML")
-from baseline.baseline import baseline
+from baseline.Scaffold import Scaffold
 
 class BaselineModel_1b(nn.Module):
     def __init__(self, input_shape):
