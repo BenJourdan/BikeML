@@ -1,5 +1,6 @@
 import os
 from os.path import join
+from typing import Protocol
 import torch
 import pandas as pd
 from skimage import io, transform
@@ -20,7 +21,9 @@ from math import comb, floor
 from collections import OrderedDict
 from itertools import combinations as combs
 from time import time
+import _pickle as cPickle
 
+import torch.multiprocessing
 
 def load_image(file):
     '''
@@ -40,7 +43,7 @@ class SquarePad:
 		return F.pad(image, padding, 0, 'constant')
  
 class BikeDataset(Dataset):
-    def __init__(self,root,data_set_size,balance=0.5,transforms=None,cache_dir="./cache",half=True):
+    def __init__(self,root,data_set_type,data_set_size,balance=0.5,transforms=None,cache_dir="./cache",half=True,memory=True,image_dim=512,memory_dump_path="/data_raid/memory_dump",**kwargs):
         # Number of images from same ad (labelled 1)
         self.num_same_ad = floor(data_set_size * balance)
         # Number of images from diff ads (labelled 0)
@@ -52,10 +55,12 @@ class BikeDataset(Dataset):
         # same_ad_filenames[0] = ('root///img1.jpg', 'root///img2.jpg')
         self.diff_ad_filenames = []
 
+
         self.ad_to_img = OrderedDict()
         self.ad_to_img_pairs = OrderedDict()
         self.half = half
 
+        self.memory = memory
         # check if cache folder exists
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
@@ -102,24 +107,126 @@ class BikeDataset(Dataset):
             with open(join(cache_dir,"diff_ad_filenames.json"),"w") as file:
                 json.dump(self.diff_ad_filenames,file)
 
-        if self.num_same_ad > len(self.same_ad_filenames):
+        if self.num_same_ad != len(self.same_ad_filenames):
             print('Change in data size, recalculating same_ad_filenames...')
             self.populate_same_ad_filename_list()
             with open(join(cache_dir,"same_ad_filenames.json"),"w") as file:
                 json.dump(self.same_ad_filenames, file)
 
-        if self.num_diff_ad > len(self.diff_ad_filenames):
+        if self.num_diff_ad != len(self.diff_ad_filenames):
             print('Change in data size, recalculating diff_ad_filenames...')
             self.populate_diff_ad_filename_list()
             with open(join(cache_dir,"diff_ad_filenames.json"),"w") as file:
                 json.dump(self.diff_ad_filenames,file)
-        # transforms
+
+        # set transforms
         self.transform = transforms
 
+        #### If loading data into memory, then Load the data tensors from disk or create them again (and save them for future use)
+        if self.memory:
+
+            #Attempt number 1:
+        
+            # self.image_array = None
+            # self.label_array = None
+            
+            if not os.path.exists(memory_dump_path):
+                        os.makedirs(memory_dump_path)
+                        
+            # if os.path.exists(join(memory_dump_path,"image_dump.npz")) and os.path.exists(join(memory_dump_path,"label_dump.npz")):
+            #     self.image_array = torch.load(join(memory_dump_path,"image_dump.npz"))
+            #     self.label_array = torch.load(join(memory_dump_path,"label_dump.npz"))
+
+            #     ###### check if data set size has changed
+            #     if len(self) == self.label_array.size[0]:
+            #         pass
+            #     else:
+            #         self.save_data_arrays(memory_dump_path,image_dim)
+                
+            # else:
+            #     self.save_data_arrays(memory_dump_path,image_dim)
+            print(len(self.same_ad_filenames),len(self.diff_ad_filenames))
+            keys = set([image_path for image_tuple in self.same_ad_filenames+self.diff_ad_filenames for image_path in image_tuple])                
+            self.image_database_dict = dict.fromkeys(keys) 
+
+            if os.path.exists(join(memory_dump_path,f"{data_set_type}_image_dict_dump.p")):
+                tmp_image_database_dict = cPickle.load(open(join(memory_dump_path,f"{data_set_type}_image_dict_dump.p"),"rb"))
+                if len(tmp_image_database_dict.keys()) != len(keys):
+                    for key in self.image_database_dict.keys():
+                        self.image_database_dict[key] = self.transform(Image.open(key).convert("RGB")).type(torch.uint8)
+
+                    cPickle.dump(self.image_database_dict,open(join(memory_dump_path,f"{data_set_type}_image_dict_dump.p"),"wb"),protocol=-1)
+                else:
+                    self.image_database_dict = tmp_image_database_dict
+            else:
+                for i,key in enumerate(self.image_database_dict.keys()):
+                    print(i) if i%1000 == 0 else None
+                    self.image_database_dict[key] = self.transform(Image.open(key).convert("RGB")).type(torch.uint8)
+
+                cPickle.dump(self.image_database_dict,open(join(memory_dump_path,f"{data_set_type}_image_dict_dump.p"),"wb"),protocol=-1)
+             
+              
     def __len__(self):
         return self.num_same_ad + self.num_diff_ad
 
     def __getitem__(self, idx):
+
+        if self.memory==False:
+            return self.read_from_disk(idx)
+        else:
+            return self.read_from_memory(idx)
+        
+    def save_data_arrays(self,memory_dump_path, image_dim):
+        
+        #self.image_array = torch.zeros([len(self),2,3,image_dim, image_dim], dtype=torch.uint8)
+        #self.label_array = torch.zeros(len(self),dtype=torch.uint8)
+        
+    # def __init__(self,root = "/scratch/datasets/raw/",batch_size=100,shuffle=True,num_workers=24,prefetch_factor=3,
+    #                 transforms = torchvision.transforms.Compose([
+    #                                                     SquarePad(),
+    #                                                     Resize((256,256)),
+    #                                                     ToTensor(),
+    #                                                 ]),
+    #                 normalize=True, cache_dir="./cache",
+    #                 data_set_size = 10000,
+    #                 balance = 0.5,
+    #                 data_set_type = None,
+    #                 data_splits = {'train': 50/60, 'val': 5/60, 'test': 5/60},
+    #                 half=False,
+    #                 **kwargs):
+
+        # for i in range(len(self)):
+        #     if i%10 == 0 :
+        #         print(i)
+        #     image_a,image_b,label = self.read_from_disk(i)
+        #     self.image_array[i][0] = image_a
+        #     self.image_array[i][1] = image_b
+        #     self.label_array[i] = label
+
+        torch.save(self.image_array, join(memory_dump_path,"image_dump.npz"))
+        torch.save(self.label_array, join(memory_dump_path,"label_dump.npz"))
+    
+    def read_from_memory(self,idx):
+        image_a = None
+        image_b = None
+        label = torch.Tensor(1)
+
+        if idx < self.num_same_ad:
+            image_a = self.image_database_dict[self.same_ad_filenames[idx][0]]
+            image_b = self.image_database_dict[self.same_ad_filenames[idx][1]]
+            label[0] = 1.0
+        else:
+            actual_idx = idx - self.num_same_ad
+            image_a = self.image_database_dict[self.diff_ad_filenames[actual_idx][0]]
+            image_b = self.image_database_dict[self.diff_ad_filenames[actual_idx][1]]
+            label[0] = 0.0
+        
+        if self.half==True:
+            return  image_a.half(),image_b.half(),label.half()
+        else: 
+            return  image_a.float(),image_b.float(),label.float()
+    
+    def read_from_disk(self,idx):
         image_a = None
         image_b = None
         label = torch.Tensor(1)
@@ -135,8 +242,9 @@ class BikeDataset(Dataset):
         
         if self.half==True:
             return  image_a.half(),image_b.half(),label.half()
-        else:
+        else: 
             return  image_a.float(),image_b.float(),label.float()
+                
     
     def populate_ad_to_img_dicts(self):
         # Key: Ad filepath 
@@ -159,7 +267,7 @@ class BikeDataset(Dataset):
     
     def populate_same_ad_filename_list(self):
         # self.num_same_ad
-
+        self.same_ad_filenames = []
         # Num of img pairs per ad
         combinations = [len(ad_imgs_combs) for ad_imgs_combs in self.ad_to_img_pairs.values()]
         cdf = np.cumsum(np.array(combinations))
@@ -195,6 +303,8 @@ class BikeDataset(Dataset):
 
         Hard way needs to compute n = \sum_{k=1}^n \Big[m_k (\sum_{i=k+1}^N m_i)] where m_i is the number of images in the ith Ad
         """
+
+        self.diff_ad_filenames = []
         all_ad_img = list(self.ad_to_img.values())
         imgs_per_ad = [len(val) for val in self.ad_to_img.values()]
         cdf = np.cumsum(np.array(imgs_per_ad))
@@ -289,12 +399,11 @@ class BikeDataLoader(DataLoader):
     
         if normalize:
             self.load_normalization_constants(cache_dir)
-            self.dataset = BikeDataset(root,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]),cache_dir=cache_dir,half=half)
+            self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,Normalize(self.means,self.stds)]),cache_dir=cache_dir,half=half,**kwargs)
         else:
-            self.dataset = BikeDataset(root,data_set_size,balance,transforms=transforms,cache_dir=cache_dir,half=half)
+            self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,transforms=transforms,cache_dir=cache_dir,half=half,**kwargs)
         super().__init__(self.dataset,batch_size=batch_size,shuffle=shuffle,
-                            num_workers=num_workers, prefetch_factor=prefetch_factor,
-                            **kwargs)
+                            num_workers=num_workers, prefetch_factor=prefetch_factor)
 
     def compute_normalization_constants(self):
         means = []
@@ -334,23 +443,23 @@ if __name__ == "__main__":
     #                                                 ]),cache_dir="./cache")
     
 
-    dataloader = BikeDataLoader(data_set_type="train",data_set_size=200000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=28,
+    dataloader = BikeDataLoader(data_set_type="train",data_set_size=250000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=1,
                                     transforms = torchvision.transforms.Compose([
                                                         SquarePad(),
                                                         Resize((512,512)),
                                                         ToTensor(),
-                                                    ]))
-
-    dataloader.compute_normalization_constants()
+                                                    ]),
+                                                    memory=True,
+                                                    image_dim=512,
+                                                    memory_dump_path="/data_raid/memory_dump",pin_memory=False)
+                                                    
 
     # for i,batch in enumerate(tqdm(dataloader)):
     #     a,b,l = batch
 
-
 # raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)
 # 0.47847774624824524,0.45420822501182556,0.4112544357776642
 # 0.26963523030281067,0.25664404034614563,0.2600036859512329
-
 
 # 0.36192944645881653,0.34354230761528015,0.306730717420578
 # 0.292623370885849,0.2772243022918701,0.260631799697876

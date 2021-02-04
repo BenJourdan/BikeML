@@ -26,7 +26,7 @@ dataloader_params = dict(
     data_splits = {"train":50/60,"val": 5/60,"test":5/60},
     normalize = True,
     balance = 0.5,
-    num_workers = 32,
+    num_workers = 1,
     prefetch_factor=1,
     batch_size = 210,
     transforms = torchvision.transforms.Compose([
@@ -35,7 +35,10 @@ dataloader_params = dict(
                                                 ToTensor(),
                                                     ]),
     root = "/scratch/datasets/raw/",
-    shuffle=True
+    shuffle=True,
+    memory=True,
+    image_dim=512,
+    memory_dump_path="/data_raid/memory_dump"
 )
 
 #Baseline_1a
