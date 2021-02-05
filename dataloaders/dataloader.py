@@ -443,7 +443,7 @@ if __name__ == "__main__":
     #                                                 ]),cache_dir="./cache")
     
 
-    dataloader = BikeDataLoader(data_set_type="train",data_set_size=250000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=1,
+    dataloader = BikeDataLoader(data_set_type="train",data_set_size=100000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=1,
                                     transforms = torchvision.transforms.Compose([
                                                         SquarePad(),
                                                         Resize((512,512)),
@@ -454,8 +454,8 @@ if __name__ == "__main__":
                                                     memory_dump_path="/data_raid/memory_dump",pin_memory=False)
                                                     
 
-    # for i,batch in enumerate(tqdm(dataloader)):
-    #     a,b,l = batch
+    for i,batch in enumerate(tqdm(dataloader)):
+        a,b,l = batch
 
 # raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)
 # 0.47847774624824524,0.45420822501182556,0.4112544357776642
