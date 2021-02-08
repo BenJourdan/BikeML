@@ -64,8 +64,8 @@ class CustomNormForward:
         #This function first converts (3,512,512) to (512,512,3)
         #Then shifts by the mean and divides by the std
         #Then clips to the clip radius
-        #Then multiplies the values to bein in the range [-127,127]
-        return ((((image.T.astype(np.float)-self.means)/self.stds).clip(-self.clip_radius,self.clip_radius))*(127/self.clip_radius)).astype(np.int8).T
+        #Then multiplies the values to be in in the range [-127,127] (int8 is technically [-128,127] but I don't think there's a nice efficient way of making use of that extra bit)
+        return ((((image.T.astype(np.float16)-self.means)/self.stds).clip(-self.clip_radius,self.clip_radius))*(127/self.clip_radius)).astype(np.int8).T
 
 class CustomeNormBackward:
     def __call__(self,image):
@@ -174,12 +174,13 @@ class BikeDataset(Dataset):
         result = self.redis.get(image_id)
         if result == None:
 
-            try:
+            try:# some images have an alpha channel hence the [:3]. Some also are grescale so this fails. The colourspace conversion then converts these to RGB
                 image = pyvips.Image.new_from_file(image_id, access="sequential")[:3]
             except:
                 image = pyvips.Image.new_from_file(image_id, access="sequential")
             image = image.colourspace("srgb")
             
+            #prenormalize (normalize and store as int8 in redis)
             image = self.pre_norm_transforms(image)
             encoded_img = msgpack_numpy.packb(image)
             self.redis.set(image_id,encoded_img)
@@ -202,15 +203,18 @@ class BikeDataset(Dataset):
             image_b = self.read_image_from_redis(self.diff_ad_filenames[actual_idx][1])
             label[0] = 0.0
         
+        #complete normalization:
         image_a = self.norm_transform(image_a)
         image_b = self.norm_transform(image_b)
 
 
+        if self.half:
+            return  torch.from_numpy(image_a).half(),torch.from_numpy(image_b).half(),label
+        else:
+            return  torch.from_numpy(image_a),torch.from_numpy(image_b),label
 
-        return  torch.from_numpy(image_a),torch.from_numpy(image_b),label
-    
     def read_pyvip_from_disk(self,image_id):
-        try:
+        try:# some images have an alpha channel hence the [:3]. Some also are grescale so this fails. The colourspace conversion then converts these to RGB
             image = pyvips.Image.new_from_file(image_id)[:3]
         except:
             image = pyvips.Image.new_from_file(image_id)
@@ -234,9 +238,14 @@ class BikeDataset(Dataset):
             image_b = self.read_pyvip_from_disk(self.diff_ad_filenames[actual_idx][1])
             label[0] = 0.0
         
+        #complete normalization:
+        image_a = self.norm_transform(image_a)
+        image_b = self.norm_transform(image_b)
 
-
-        return  torch.from_numpy(image_a),torch.from_numpy(image_b),label
+        if self.half:
+            return  torch.from_numpy(image_a).half(),torch.from_numpy(image_b).half(),label
+        else:
+            return  torch.from_numpy(image_a),torch.from_numpy(image_b),label
                 
     
     def populate_ad_to_img_dicts(self):
@@ -377,6 +386,7 @@ class BikeDataLoader(DataLoader):
                     memory = False,
                     **kwargs):
         
+        self.base_path = root
         if data_set_type == 'train':
             cache_dir = join(root,f"cache_train")
             root = "/scratch/datasets/raw/train"
@@ -394,6 +404,10 @@ class BikeDataLoader(DataLoader):
         self.Normalizer = Normalize(self.means,self.stds)
         self.NormalizerForward = CustomNormForward(self.means,self.stds,1.5)
         self.NormalizerBackward = CustomeNormBackward()
+
+        self.normalize = normalize
+        self.memory = memory
+        
         if normalize:
             self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,pre_norm_transforms=torchvision.transforms.Compose([transforms,self.NormalizerForward]),norm_transform=torchvision.transforms.Compose([self.NormalizerBackward]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
         else:
@@ -402,6 +416,8 @@ class BikeDataLoader(DataLoader):
                             num_workers=num_workers, prefetch_factor=prefetch_factor)
 
     def compute_normalization_constants(self):
+        if self.memory ==True:
+            print("Only do this if data in memory hasn't been normalized. Otherwise you won't be computing the true normalization constants")
         means = []
         stds = []
         for batch in tqdm(self):
@@ -419,8 +435,11 @@ class BikeDataLoader(DataLoader):
         means = [str(x) for x in np.ndarray.tolist(np.array(means).mean(axis=0))]
         stds  = [str(x) for x in np.ndarray.tolist(np.array(stds).mean(axis=0))]
 
-        with open(join(self.dataset.cache_dir,"normalization.txt"),"w") as f:
-            f.write(",".join(means)+"\n"+",".join(stds)+"\n")
+        #write constants to each split
+        for split in ["train","val","test"]:
+            cache_dir = join(self.base_path,f"cache_{split}")
+            with open(join(cache_dir,"normalization.txt"),"w") as f:
+                f.write(",".join(means)+"\n"+",".join(stds)+"\n")
         
     def load_normalization_constants(self,cache_dir="./cache"):
         with open(join(cache_dir,"normalization.txt"),"r") as f:
@@ -429,7 +448,8 @@ class BikeDataLoader(DataLoader):
             self.stds = data[1]
     
     def flush_redis(self):
-        self.dataset.redis.execute_command("FLUSHALL ASYNC")
+        redis = Redis('127.0.0.1')
+        redis.execute_command("FLUSHALL ASYNC")
 
 if __name__ == "__main__":
     torch.manual_seed(0)
@@ -443,29 +463,25 @@ if __name__ == "__main__":
     #                                             image_dim=512,
     #                                             memory_dump_path="/data_raid/memory_dump",pin_memory=False)
 
-    dataloader = BikeDataLoader(data_set_type="train",data_set_size=500000,balance=0.5,normalize=True,prefetch_factor=1,batch_size=256,num_workers=28,
+    dataloader = BikeDataLoader(data_set_type="train",data_set_size=500000,balance=0.5,normalize=True,prefetch_factor=2,batch_size=512,num_workers=30,
                                     transforms = torchvision.transforms.Compose([
                                                         SquarePadAndResize(256),
                                                     ]),
                                                     memory=True,
                                                     image_dim=256,
+                                                    half=True,
                                                     memory_dump_path="/data_raid/memory_dump",pin_memory=True)
 
     # dataloader.compute_normalization_constants()
-    # dataloader.flush_redis()                                 
+    # dataloader.flush_redis()    
+                                 
     for _ in range(2):
         for i,batch in enumerate(tqdm(dataloader)):
             a,b,l = batch
-
             a.to(device)
             b.to(device)
 
-# raw normalization constants for randomcrop(256,256,pad_if_needed=True) on SeptOct dataset (batchsize 4096)
-# 0.47847774624824524,0.45420822501182556,0.4112544357776642
-# 0.26963523030281067,0.25664404034614563,0.2600036859512329
 
-# 0.36192944645881653,0.34354230761528015,0.306730717420578
-# 0.292623370885849,0.2772243022918701,0.260631799697876
 
 
 # 256 with 10 was pretty sweet: 4:40 to 4:50 minutes.
