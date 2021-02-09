@@ -2,6 +2,7 @@
 */__pycache__/*
 */wandb/*
 *.pyc
+*/*.pyc
 *.txt
 *.json
 *.tar
