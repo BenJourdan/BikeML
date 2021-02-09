@@ -29,7 +29,41 @@ import pyvips
 import warnings
 from viztracer import log_sparse
 warnings.filterwarnings("ignore")
+from io import StringIO
 
+
+
+format_to_dtype = {
+    'uchar': np.uint8,
+    'char': np.int8,
+    'ushort': np.uint16,
+    'short': np.int16,
+    'uint': np.uint32,
+    'int': np.int32,
+    'float': np.float32,
+    'double': np.float64,
+    'complex': np.complex64,
+    'dpcomplex': np.complex128,
+}
+
+# map np dtypes to vips
+dtype_to_format = {
+    'uint8': 'uchar',
+    'int8': 'char',
+    'uint16': 'ushort',
+    'int16': 'short',
+    'uint32': 'uint',
+    'int32': 'int',
+    'float32': 'float',
+    'float64': 'double',
+    'complex64': 'complex',
+    'complex128': 'dpcomplex',
+}
+
+def vips2numpy(vi):
+    return np.ndarray(buffer=vi.write_to_memory(),
+                      dtype=format_to_dtype[vi.format],
+                      shape=[vi.height, vi.width, vi.bands])
 
 # Defines a SquarePad class to centre and pad the images
 
@@ -52,7 +86,7 @@ class SquarePadAndResize:
     def __call__(self,image):
         img = pyvips.Image.thumbnail_image(image, self.target_dim, height=self.target_dim)
         img = img.gravity("centre",self.target_dim,self.target_dim,background=[0,0,0])
-        arr = np.frombuffer(img.write_to_memory(),dtype=np.uint8).reshape(3,self.target_dim,self.target_dim)
+        arr = vips2numpy(img)
         return arr
 
 class CustomNormForward:
@@ -65,16 +99,25 @@ class CustomNormForward:
         #Then shifts by the mean and divides by the std
         #Then clips to the clip radius
         #Then multiplies the values to be in in the range [-127,127] (int8 is technically [-128,127] but I don't think there's a nice efficient way of making use of that extra bit)
-        return ((((image.T.astype(np.float16)-self.means)/self.stds).clip(-self.clip_radius,self.clip_radius))*(127/self.clip_radius)).astype(np.int8).T
+        ret =  ((((image.astype(np.float16)-self.means)/self.stds).clip(-self.clip_radius,self.clip_radius))*(127/self.clip_radius)).astype(np.int8)
+        return ret
 
 class CustomeNormBackward:
     def __call__(self,image):
         #Now we need to convert to float and divide by 127 to get the normalized values again
         return (image.astype(np.float)/127)
- 
+
+class Norm2:
+    def __init__(self,means,stds):
+        self.normalizer = Normalize(means,stds)
+    def __call__(self,image):
+        image = torch.from_numpy(image.astype(np.float32)).T
+        img = self.normalizer(image).numpy().astype(np.float16)
+        return img
+
 class BikeDataset(Dataset):
     def __init__(self,root,data_set_type,data_set_size,balance=0.5,pre_norm_transforms=None,norm_transform=None,cache_dir="./cache",half=True,memory=True,
-                    image_dim=512,**kwargs):
+                    image_dim=512,device=None,**kwargs):
         # Number of images from same ad (labelled 1)
         self.num_same_ad = floor(data_set_size * balance)
         # Number of images from diff ads (labelled 0)
@@ -100,7 +143,7 @@ class BikeDataset(Dataset):
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
         self.cache_dir = cache_dir
-
+        self.device = device
 
         #check if ordered dicts from Ad filepaths to Image filepaths is cached. If not then create it and cache it
         if os.path.exists(join(cache_dir,"ad_to_imgs_dict_pairs.json")):
@@ -203,23 +246,34 @@ class BikeDataset(Dataset):
             image_b = self.read_image_from_redis(self.diff_ad_filenames[actual_idx][1])
             label[0] = 0.0
         
+        
         #complete normalization:
-        image_a = self.norm_transform(image_a)
-        image_b = self.norm_transform(image_b)
+        image_a = torch.from_numpy(self.norm_transform(image_a))
+        image_b = torch.from_numpy(self.norm_transform(image_b))
 
 
         if self.half:
-            return  torch.from_numpy(image_a).half(),torch.from_numpy(image_b).half(),label
+            image_a = image_a.half()
+            image_b = image_b.half()
+
         else:
-            return  torch.from_numpy(image_a),torch.from_numpy(image_b),label
+            image_a =  image_a.float()
+            image_b = image_b.float()
+
+        # image_a.to(device)
+        # image_b.to(device)
+        
+        return image_a,image_b,label
+
 
     def read_pyvip_from_disk(self,image_id):
         try:# some images have an alpha channel hence the [:3]. Some also are grescale so this fails. The colourspace conversion then converts these to RGB
             image = pyvips.Image.new_from_file(image_id)[:3]
+
         except:
             image = pyvips.Image.new_from_file(image_id)
         image = image.colourspace("srgb")
-
+        
 
         return self.pre_norm_transforms(image)
 
@@ -238,6 +292,7 @@ class BikeDataset(Dataset):
             image_b = self.read_pyvip_from_disk(self.diff_ad_filenames[actual_idx][1])
             label[0] = 0.0
         
+
         #complete normalization:
         image_a = self.norm_transform(image_a)
         image_b = self.norm_transform(image_b)
@@ -245,7 +300,7 @@ class BikeDataset(Dataset):
         if self.half:
             return  torch.from_numpy(image_a).half(),torch.from_numpy(image_b).half(),label
         else:
-            return  torch.from_numpy(image_a),torch.from_numpy(image_b),label
+            return  torch.from_numpy(image_a).float(),torch.from_numpy(image_b).float(),label
                 
     
     def populate_ad_to_img_dicts(self):
@@ -374,8 +429,7 @@ class BikeDataLoader(DataLoader):
 
     def __init__(self,root = "/scratch/datasets/raw/",batch_size=100,shuffle=True,num_workers=24,prefetch_factor=3,
                     transforms = torchvision.transforms.Compose([
-                                                        SquarePad(),
-                                                        Resize((256,256)),
+                                                        SquarePadAndResize(256),
                                                     ]),
                     normalize=True, cache_dir="./cache",
                     data_set_size = 10000,
@@ -409,7 +463,8 @@ class BikeDataLoader(DataLoader):
         self.memory = memory
         
         if normalize:
-            self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,pre_norm_transforms=torchvision.transforms.Compose([transforms,self.NormalizerForward]),norm_transform=torchvision.transforms.Compose([self.NormalizerBackward]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
+            # self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,pre_norm_transforms=torchvision.transforms.Compose([transforms,self.NormalizerForward]),norm_transform=torchvision.transforms.Compose([self.NormalizerBackward]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
+            self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,pre_norm_transforms=torchvision.transforms.Compose([transforms,Norm2(self.means,self.stds)]),norm_transform=torchvision.transforms.Compose([Id()]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
         else:
             self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,pre_norm_transforms=transforms,norm_transform=torchvision.transforms.Compose([Id()]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
         super().__init__(self.dataset,batch_size=batch_size,shuffle=shuffle,
@@ -453,7 +508,7 @@ class BikeDataLoader(DataLoader):
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     # dataloader = BikeDataLoader(data_set_type="train",data_set_size=100000,balance=0.5,normalize=True,prefetch_factor=1,batch_size=256,num_workers=28,
     #                             transforms = torchvision.transforms.Compose([
     #                                                 SquarePad(),
@@ -462,26 +517,23 @@ if __name__ == "__main__":
     #                                             memory=True,
     #                                             image_dim=512,
     #                                             memory_dump_path="/data_raid/memory_dump",pin_memory=False)
-
-    dataloader = BikeDataLoader(data_set_type="train",data_set_size=500000,balance=0.5,normalize=True,prefetch_factor=2,batch_size=512,num_workers=30,
+    dataloader = BikeDataLoader(data_set_type="train",data_set_size=500000,balance=0.5,normalize=True,prefetch_factor=2,batch_size=256,num_workers=16,
                                     transforms = torchvision.transforms.Compose([
                                                         SquarePadAndResize(256),
                                                     ]),
                                                     memory=True,
                                                     image_dim=256,
                                                     half=True,
-                                                    memory_dump_path="/data_raid/memory_dump",pin_memory=True)
+                                                    pin_memory=True)
 
     # dataloader.compute_normalization_constants()
-    # dataloader.flush_redis()    
-                                 
+    # dataloader.flush_redis()
     for _ in range(2):
         for i,batch in enumerate(tqdm(dataloader)):
             a,b,l = batch
-            a.to(device)
-            b.to(device)
+
+            plt.imshow(a[0].float().T)
+            plt.show()
 
 
 
-
-# 256 with 10 was pretty sweet: 4:40 to 4:50 minutes.
