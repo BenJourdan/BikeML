@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 from torch.optim import Adam
 
-
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -29,6 +28,7 @@ from baseline.BaselineModel_1a import BaselineModel_1a
 from dataloaders.dataloader import  BikeDataLoader
 
 from matplotlib.font_manager import FontProperties
+from pytorch_memlab import MemReporter
 
 prop = FontProperties(fname="NotoColorEmoji.tff")
 plt.rcParams['font.family'] = prop.get_family()
@@ -37,6 +37,7 @@ plt.rcParams['font.family'] = prop.get_family()
 prop = FontProperties(fname="NotoColorEmoji.tff")
 plt.rcParams['font.family'] = prop.get_family()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+reporter = MemReporter()
 
 def optimizer_to(optim, device):
     for param in optim.state.values():
@@ -56,18 +57,19 @@ def model_pipeline(hyperparameters):
     seed = 0
     rng = np.random.RandomState(seed=seed)
     torch.manual_seed(seed=0)
-
+    hyperparameters["device"] = device
     # tell wandb to get started
-    with wandb.init(config=hyperparameters):
+    with wandb.init(project="bike-1b",config=hyperparameters, name=hyperparameters["exp_name"],save_code=True):
         # access all HPs through wandb.config, so logging matches execution!
         config = wandb.config
         # make the model, data, and optimization problem
         model, train_loader, val_loader, test_loader, criterion, optimizer = make(config,hyperparameters)
         # and use them to train the model
+        torch.cuda.empty_cache()
         train(model, train_loader, val_loader, criterion, optimizer, config)
         # and test its final performance
         evaluate(model,optimizer,test_loader,criterion,dataset='test',hyperparameters=hyperparameters)
-        return model
+        return model 
 
 def make(config,hyperparameters):
     # config.project_name
@@ -80,8 +82,8 @@ def make(config,hyperparameters):
     model = hyperparameters["model"](**config)
 
     # Make the loss and optimizer
-    criterion = hyperparameters["criterion"]()
-    optimizer = Adam(model.parameters(),lr=config.lr, weight_decay=config.weight_decay)
+    criterion = hyperparameters["criterion"](**hyperparameters)
+    optimizer = Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
 
     #learning_rate_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs,eta_min=0.00002)
@@ -108,37 +110,42 @@ def make(config,hyperparameters):
     model.to(device)
     optimizer_to(optimizer,device)
 
-    
+
     return model, train_loader, val_loader, test_loader, criterion, optimizer
 
 
 def train(model, train_loader, val_loader, criterion, optimizer, config):
     # tell wandb to watch what the model gets up to: gradients, weights, and more!
     wandb.watch(model, criterion, log="all", log_freq=10)
-    
+
     # Run training and track with wandb
     example_ct = 0  # number of examples seen
     batch_ct = 0
 
-
-
     for epoch in range(config.starting_epoch,config.epochs):
         model.train()
-        with tqdm(total=len(train_loader),ncols=160) as pbar_train:
+        with tqdm(total=len(train_loader),ncols=120) as pbar_train:
             for data in train_loader:
-                loss,outputs = train_batch(data, model, optimizer, criterion)
+                torch.cuda.empty_cache() 
+                image_as, image_bs,labels = data[0].to(device),data[1].to(device),data[2].to(device)
+
+                loss,outputs = train_batch([image_as,image_bs,labels], model, optimizer, criterion)
                 example_ct +=  data[0].shape[0]
                 batch_ct += 1
                 # Report metrics every batch
                 accuracy = model.train_compute_acc(outputs)
+                model.track_extra_metrics(outputs, epoch,split="train")
                 train_log(loss, accuracy, example_ct, epoch)
                 pbar_train.update(1)
-                pbar_train.set_description(f" Epoch: {epoch} loss: {loss:.4f}, accuracy: {accuracy:.4f}")
+                pbar_train.set_description(f" Epoch: {epoch} loss: {loss:.4f}")
         #validate
+        torch.cuda.empty_cache() 
+        # reporter.report()
         evaluate(model,optimizer,val_loader,criterion,dataset='val',path=config.project_path,epoch=epoch, hyperparameters=hyperparameters)
 
 
 def train_batch(data, model, optimizer, criterion):
+
     loss, outputs, labels = model.train_batch(data, criterion, device, model)
 
     # Backward pass ⬅
@@ -147,32 +154,48 @@ def train_batch(data, model, optimizer, criterion):
     # Step with optimizer
     #learning_rate_scheduler.step()
     optimizer.step()
-    return loss, [outputs, labels]
+    return loss.detach().item(), [outputs, labels]
 
 def train_log(loss,accuracy, example_ct, epoch):
     wandb.log({"epoch": epoch, "loss": float(loss),"accuracy":accuracy}, step=example_ct)
 
 def evaluate(model,optimizer, loader, criterion, dataset, hyperparameters, path=None,epoch=None):
-    model.eval() 
+    model.eval()
     # Run the model on some test examples
     accuracies = []
     losses = []
 
     viz_flag =  True
+    list_of_outputs = None
+    list_of_image_a_outputs = None
+    list_of_image_b_outputs = None
+    list_of_labels = None
     with torch.no_grad():
-        
         for data in loader:
-            loss, accuracy, outputs = model.evaluate_batch(data, criterion, device, model)
+            torch.cuda.empty_cache() 
+            # reporter.report()
+            image_as, image_bs,labels = data[0].to(device),data[1].to(device),data[2].to(device)
+            loss, accuracy, outputs = model.evaluate_batch([image_as,image_bs,labels], criterion, device, model)
             if viz_flag:
+                list_of_image_a_outputs = outputs[0].cpu()
+                list_of_image_b_outputs = outputs[1].cpu()
+                list_of_labels = data[2].cpu()
                 model.visualize(data,
                                         outputs,
                                         epoch,
                                         number_of_figures=hyperparameters["number_of_figures"],
                                         unNormalizer = UnNormalize(loader.means,loader.stds))
+                viz_flag =False
+            else:
+                list_of_image_a_outputs = torch.cat((list_of_image_a_outputs, outputs[0].cpu()), 0)
+                list_of_image_b_outputs = torch.cat((list_of_image_b_outputs, outputs[0].cpu()), 0)
+                list_of_labels = torch.cat((list_of_labels,data[2].cpu()),0)
+
             losses.append(loss)
             accuracies.append(accuracy)
-
+    list_of_outputs = [[list_of_image_a_outputs, list_of_image_b_outputs], list_of_labels]
     if dataset == "val":
+        model.track_extra_metrics(list_of_outputs, epoch,split="val")
         wandb.log({"{}_accuracy".format(dataset): np.mean(accuracies),"global_step":epoch})
         wandb.log({"{}_loss".format(dataset): np.mean(losses),"global_step":epoch})
 
@@ -186,6 +209,21 @@ def evaluate(model,optimizer, loader, criterion, dataset, hyperparameters, path=
             "model_state_dict":model.state_dict(),
             "optimizer_state_dict":optimizer.state_dict()
         },join(path,"models",f"model_{epoch}.tar"))
+
+    if dataset == "test":
+        model.track_extra_metrics(list_of_outputs, epoch,split="test")
+
+# def evaluate_batch(data, model, optimizer, criterion):
+
+#     loss, outputs, labels = model.train_batch(data, criterion, device, model)
+
+#     # Backward pass ⬅
+#     optimizer.zero_grad()
+#     loss.backward()
+#     # Step with optimizer
+#     #learning_rate_scheduler.step()
+#     optimizer.step()
+#     return loss.detach().item(), [outputs, labels]
 
 if __name__ == "__main__":
     # login to wandb:
