@@ -6,6 +6,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn import functional
+import numpy as np
+from torch.nn import CosineSimilarity
 
 class SupervisedContrastiveLoss(nn.Module):
     """
@@ -13,7 +15,7 @@ class SupervisedContrastiveLoss(nn.Module):
     Takes embeddings of two samples and a target label == 1 if samples are from the same class and label == 0 otherwise
     """
 
-    def __init__(self, margin):
+    def __init__(self, margin, **kwargs):
         super(SupervisedContrastiveLoss, self).__init__()
         self.margin = margin
         self.eps = 1e-9
@@ -22,8 +24,43 @@ class SupervisedContrastiveLoss(nn.Module):
     def forward(self, output1, output2, target):
         distances = (output2 - output1).pow(2).sum(1)  # squared distances
         losses = 0.5 * (target.float() * distances +
-                        (1 + -1 * target).float() * F.relu(self.margin - (distances + self.eps).sqrt()).pow(2))
+                        (1 - target).float() * F.relu(self.margin - (distances + self.eps).sqrt()).pow(2))
         return losses.mean()
+
+    @staticmethod
+    def embedding_dist(output1, output2):
+        return (output2 - output1).pow(2).sum(1).mean()
+        
+
+class SupervisedCosineContrastiveLoss(nn.Module):
+    """
+    Cosine Contrastive loss
+    Takes embeddings of two samples and a target label == 1 if samples are from the same class and label == 0 otherwise
+    """
+
+    def __init__(self, margin, **kwargs):
+        super(SupervisedCosineContrastiveLoss, self).__init__()
+        self.margin = margin
+        self.distance_metric = CosineSimilarity()
+    def forward(self, output1, output2, target):
+        return F.cosine_embedding_loss(output1, output2, target*2-1.0, margin=self.margin)
+
+    def embedding_dist(self,output1, output2):
+        return (1.0 - self.distance_metric(output1, output2)).mean()
+
+
+        # print(output1.shape)
+        # print(output2.shape)
+        # print(output1.dtype)
+        # print(output2.dtype)
+        # distances = 1-self.cos(output1,output2)
+        # print(distances)
+        
+        # losses = 0.5 * (target.float() * distances.pow +
+        #                 (1 - target).float() * F.relu(self.margin - (distances + self.eps).sqrt()).pow(2))
+        # mean = losses.mean()
+        # print(mean)
+        # return losses.mean()
 
 class TripletLoss(nn.Module):
     """
@@ -31,7 +68,7 @@ class TripletLoss(nn.Module):
     Takes embeddings of an anchor sample, a positive sample and a negative sample
     """
 
-    def __init__(self, margin):
+    def __init__(self, margin, **kwargs):
         super(TripletLoss, self).__init__()
         self.margin = margin
 
@@ -42,7 +79,7 @@ class TripletLoss(nn.Module):
         return losses.mean()
 
 # class OnlineContrastiveLoss(nn.Module):
-#     """
+#     """ 
 #     Online Contrastive loss
 #     Takes a batch of embeddings and corresponding labels.
 #     Pairs are generated using pair_selector object that take embeddings and targets and return indices of positive

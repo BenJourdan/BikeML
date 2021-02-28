@@ -20,7 +20,7 @@ class ModelSnipper(nn.Module):
         return x
 
 class BaselineModel_1a(Scaffold):
-    def __init__(self, input_shape=None,mlp_layers=None,**kwargs):
+    def __init__(self, input_shape=None, mlp_layers=None, **kwargs):
         super(BaselineModel_1a, self).__init__()
         
         self.input_shape = input_shape
@@ -36,9 +36,10 @@ class BaselineModel_1a(Scaffold):
         # Setup ResNet feature extractor and loss
         resnet = models.resnet18(pretrained=True)
         backbone  = ModelSnipper(resnet,snip=1)
-        for param in backbone.parameters():
-            param.requires_grad = False
-        self.components["backbone"] = backbone
+        if self.train_backbone == False:
+            for param in backbone.parameters():
+                param.requires_grad = False
+        self.components["embedding"] = backbone
 
         # Dims: batch no.(1) x image dims(3)
         out_x = backbone(x)
@@ -59,8 +60,8 @@ class BaselineModel_1a(Scaffold):
         
 
     def forward(self,image_a,image_b):
-        out_x = self.components["backbone"](image_a)
-        out_y = self.components["backbone"](image_b)
+        out_x = self.components["embedding"](image_a)
+        out_y = self.components["embedding"](image_b)
         
         out_xy = torch.cat((torch.flatten(out_x, start_dim=1, end_dim=-1),torch.flatten(out_y, start_dim=1, end_dim=-1)),dim=1)
         

@@ -6,7 +6,6 @@ It's pretty cool.
 
 Anyway if we can get our embedding down to 2048 (a compression factor of 96 given 256x256x3 images) then 600K images takes roughly 9GB on the GPU
 without any preemptive fuckery (aka Quantitizers). A querry with nprobe=10 should take roughly 130 seconds for 100K querry points... Pretty damm fast lol.
-
 """
 
 import numpy as np
@@ -15,47 +14,89 @@ import time
 
 res = faiss.StandardGpuResources()  # use a single GPU... lol
 
-d = 2048                           # dimension
+# d = 128                           # dimension
+# nb = 600000                      # database size
+# nq = 100000                       # nb of queries
+# np.random.seed(1234)             # make reproducible
+# xb = np.random.random((nb, d)).astype('float32')
+# xb[:, 0] += np.arange(nb) / 1000.
+# xq = np.random.random((nq, d)).astype('float32')
+# xq[:, 0] += np.arange(nq) / 1000.
+
+# nlist = 100
+# k = 50
+# quantizer = faiss.IndexFlatL2(d)  # the other index
+# gpu=True
+
+# index = faiss.IndexIVFFlat(quantizer, d, nlist,faiss.METRIC_INNER_PRODUCT)
+# if gpu==True:
+#     index = faiss.index_cpu_to_gpu(res,0,index)
+# assert not index.is_trained
+# print("start training")
+# t= time.time()
+# faiss.normalize_L2(xb)
+# index.train(xb)
+# print(f"training finished in {time.time()-t}")
+# assert index.is_trained
+
+# print("adding data")
+# t = time.time()
+# index.add(xb)                  # add may be a bit slower as well
+# print(f"finished adding in {time.time()-t}")
+
+# print("starting querry")
+# t = time.time()
+# faiss.normalize_L2(xq)
+# D, I = index.search(xq, k)     # actual search
+# print(f"finished querrying with nprobe=1 in {time.time()-t}")
+# print(I[-5:])                  # neighbors of the 5 last queries
+# print(D[-5:])
+# index.nprobe = 10              # default nprobe is 1, try a few more
+
+# print("starting querry with nprobe = 10")
+# t = time.time()
+# D, I = index.search(xq, k)
+# print(I[-5:])                  # neighbors of the 5 last queries
+# print(D[-5:])
+# print(f"finished querrying with nprobe=10 in {time.time()-t}")
+import numpy as np
+d = 128                           # dimension
 nb = 600000                      # database size
 nq = 100000                       # nb of queries
 np.random.seed(1234)             # make reproducible
 xb = np.random.random((nb, d)).astype('float32')
-xb[:, 0] += np.arange(nb) / 1000.
+# xb[:, 0] += np.arange(nb) / 1000.
 xq = np.random.random((nq, d)).astype('float32')
-xq[:, 0] += np.arange(nq) / 1000.
+# xq[:, 0] += np.arange(nq) / 1000.
 
-nlist = 100
-k = 4
-quantizer = faiss.IndexFlatL2(d)  # the other index
-gpu=True
+import faiss                   # make faiss available
 
-index = faiss.IndexIVFFlat(quantizer, d, nlist,faiss.METRIC_INNER_PRODUCT)
-if gpu==True:
-    index = faiss.index_cpu_to_gpu(res,0,index)
-assert not index.is_trained
-print("start training")
-t= time.time()
+# quantizer = faiss.IndexFlatL2(d)  # the other index
+# gpu=True
+
+# index = faiss.IndexIVFFlat(quantizer, d, nlist,faiss.METRIC_INNER_PRODUCT)
+gpu = True
+index = faiss.IndexFlatIP(d)
+index = faiss.index_cpu_to_gpu(res,0,index)
+print(index.is_trained)
 faiss.normalize_L2(xb)
-index.train(xb)
-print(f"training finished in {time.time()-t}")
-assert index.is_trained
+index.add(xb[:100000])                  # add vectors to the index
+index.add(xb[100000:])                  # add vectors to the index
+print(index.ntotal)
 
-print("adding data")
-t = time.time()
-index.add(xb)                  # add may be a bit slower as well
-print(f"finished adding in {time.time()-t}")
+k = 5                          # we want to see 4 nearest neighbors
+D, I = index.search(xb[:5], k) # sanity check
+
+
 
 print("starting querry")
 t = time.time()
 faiss.normalize_L2(xq)
 D, I = index.search(xq, k)     # actual search
-print(f"finished querrying with nprobe=1 in {time.time()-t}")
-print(I[-5:])                  # neighbors of the 5 last queries
-index.nprobe = 10              # default nprobe is 1, try a few more
-
-print("starting querry with nprobe = 10")
-t = time.time()
-D, I = index.search(xq, k)
+print(I.shape)
+print(I[:5])                   # neighbors of the 5 first queries
 print(I[-5:])                  # neighbors of the 5 last queries
 
-print(f"finished querrying with nprobe=10 in {time.time()-t}")
+print(D.shape)
+print(D)
+print(f"finished querrying in {time.time()-t}")

@@ -33,6 +33,8 @@ def load_image(file):
 
 
 class FaissEvaluator:
+
+
     def __init__(self,root,model,transforms,embedding_dim=128,nearest_neighbours=60,**kwargs):
         self.root = root
         self.model = model
@@ -55,6 +57,7 @@ class FaissEvaluator:
         
         self.populate_filepaths_and_dicts()
         self.filepaths = self.filepaths
+        print(len(self.filepaths))
         self.batch_size = 256
         self.dataloader = FaissDataLoader(self.filepaths,self.transforms,batch_size=self.batch_size)
 
@@ -62,6 +65,11 @@ class FaissEvaluator:
         self.embed_imgs()
 
         self.initialize_faiss_index()
+
+        self.vec_index_to_ad_id_func = np.vectorize(self.index_to_ad_id_func)
+    
+    def index_to_ad_id_func(self, idx):
+        return self.index_to_ad_id[idx]
 
     def update_model(self, new_model):
         self.model = new_model
@@ -80,12 +88,12 @@ class FaissEvaluator:
         for imgs in tqdm(self.dataloader):
             with torch.no_grad():
                 if self.batch_size*i<len(self.filepaths):
-                    result =self.model.components["backbone"](imgs.to(device))
+                    result =self.model.components["embedding"](imgs.to(device))
                     result = result.cpu()
 
                     self.embedding_vectors[self.batch_size*i:self.batch_size*(i+1)] = result
                 else:
-                    result =self.model.components["backbone"](imgs.to(device))
+                    result =self.model.components["embedding"](imgs.to(device))
                     result = result.cpu()
                     self.embedding_vectors[self.batch_size*i:] = result
             i+=1
@@ -97,10 +105,10 @@ class FaissEvaluator:
         
 
     def evaluate(self):
-        print(self.embedding_vectors.shape)
         faiss.normalize_L2(self.embedding_vectors)
         self.index.add(self.embedding_vectors)
         self.D, self.I = self.index.search(self.embedding_vectors, self.k)
+        self.I = self.I.astype(np.int32)
         np.savetxt("D.out",self.D,delimiter=",")
         np.savetxt("I.out",self.I.astype(np.int),delimiter=",",fmt="%i")
         with open("filenames.txt","w") as f:
@@ -108,7 +116,23 @@ class FaissEvaluator:
         with open("vectors.npz","wb") as f:
             np.save(f,self.embedding_vectors)
         #TODO: Calculate top-5 accuracy etc. from index matrix and class dictionaries       
+        self.A = self.vec_index_to_ad_id_func(idx=self.I)
+
+        # Subtract query id from all columns. 
+        # If there is a match, the jth column with have a zero in it
+        self.A[:,1:] -= self.A[:,0][:, None]
+        k_accuracies = np.zeros(self.k)
+        for k in range(1, self.k+1):
+            k_accuracies[k-1]=(np.mean(np.count_nonzero(self.A[:,1:k]==0,axis=1)>=1))
         
+        with open("k_accuracies.npz","wb") as f:
+            np.save(f,k_accuracies)
+        
+        fig,ax = plt.subplots(1,1)
+
+        ax.plot(np.arange(1, self.k+1), k_accuracies)
+        plt.show()
+
     def populate_filepaths_and_dicts(self):
         """
             Dics to populate:
@@ -131,7 +155,7 @@ class FaissEvaluator:
                             self.filepaths.append(img_filepath)
                             self.index_to_num_images[idx] = len(imgs)
                             self.index_to_filepaths[idx] = img_filepath
-                            self.index_to_ad_id[idx] = ad_id
+                            self.index_to_ad_id[idx] = np.int32(ad_id)
                             idx += 1
 
 class FaissDataset(Dataset):
@@ -157,25 +181,26 @@ if __name__ == "__main__":
 
     
 
-    means = 0.36321571469306946,0.3454224765300751,0.3075723350048065
-    stds = 0.30779534578323364,0.29204192757606506,0.279329776763916
-    transform = torchvision.transforms.Compose([
+    means = 0.44746488332748413,0.4358515441417694,0.41078630089759827
+    stds = 0.304537832736969,0.30065101385116577,0.2968434989452362
+
+    transform = transforms = torchvision.transforms.Compose([
                                                 SquarePad(),
-                                                Resize((512,512)),
+                                                Resize((224,224)),
                                                 ToTensor(),
                                                 Normalize(means,stds)
                                                     ])
                                                     
 
-    model = BaselineModel_1b(input_shape=(256,3,512,512),mlp_layers=4,embedding_dimension=128)
+    model = BaselineModel_1b(input_shape=(256,3,224,224),mlp_layers=4,embedding_dimension=128)
 
 
-    checkpoint = torch.load(join("/scratch/GIT/BikeML/baseline/baseline_1b","models",f"model_5.tar"))
+    checkpoint = torch.load(join("/scratch/GIT/BikeML/baseline/baseline_1b","train_backbone_224_aug",f"model_14.tar"))
     model.load_state_dict(checkpoint["model_state_dict"])
 
     model.to(device)
                                                    
-    faiss_eval = FaissEvaluator("/scratch/datasets/raw/test",model,transform,128)
+    faiss_eval = FaissEvaluator("/scratch/datasets/raw/test",model,transform,128,nearest_neighbours=500)
 
 
     faiss_eval.evaluate()

@@ -1,3 +1,4 @@
+from typing import OrderedDict
 import torch
 import numpy as np
 from torchvision import utils
@@ -9,20 +10,38 @@ import torch.nn.functional as F
 class ModelSnipper(nn.Module):
     def __init__(self, original_model, snip=2):
         super(ModelSnipper, self).__init__()
-        self.features = torch.nn.Sequential(*list(original_model.children())[:-snip])
-
+        self.features = torch.nn.Sequential(OrderedDict(list(original_model.named_children())[:-snip]))
     def forward(self, x):
         x = self.features(x)
         return x
 
+class ModelSnipperViz(nn.Module):
+    def __init__(self, original_model, snip=2):
+        super(ModelSnipperViz, self).__init__()
+        self.features = torch.nn.Sequential(OrderedDict(list(original_model.named_children())[:-snip]))
+
+    def forward(self, x):
+        x = self.features.conv1(x)
+        x = self.features.bn1(x)
+        x = self.features.relu(x)
+        x = self.features.maxpool(x)
+
+        g0 = self.features.layer1(x)
+        g1 = self.features.layer2(g0)
+        g2 = self.features.layer3(g1)
+        g3 = self.features.layer4(g2)
+        
+        return [g.pow(2).mean(1) for g in (g0, g1, g2, g3)]
+
 class EmbeddingNetwork(nn.Module):
-    def __init__(self, input_shape, mlp_layers, embedding_dimension):
+    def __init__(self, input_shape, mlp_layers, embedding_dimension,train_backbone=False,**kwargs):
             super(EmbeddingNetwork, self).__init__()
             
             self.input_shape = input_shape
             self.mlp_layers = mlp_layers
             self.embedding_dimension = embedding_dimension
             self.components = nn.ModuleDict() 
+            self.train_backbone = train_backbone
 
             self.build_network()
         
@@ -30,9 +49,13 @@ class EmbeddingNetwork(nn.Module):
         x = torch.zeros((self.input_shape))
         # Setup ResNet feature extractor and loss
         resnet = models.resnet18(pretrained=True)
-        backbone  = ModelSnipper(resnet, snip=1)
-        for param in backbone.parameters():
-            param.requires_grad = False
+        # print(resnet)
+        backbone = ModelSnipper(resnet, snip=1)
+
+        if self.train_backbone== False:
+            for param in backbone.parameters():
+                param.requires_grad = False
+
         self.components["backbone"] = backbone
 
         x = backbone(x)
@@ -46,8 +69,14 @@ class EmbeddingNetwork(nn.Module):
             print(i)
             print(x.shape)
             
-            self.components['fcc_{}'.format(i)] = nn.Linear(in_features=x.shape[1],
-                       out_features=floor(x.shape[1]/layer_ratio))
+            #enforce the final layer to have the correct embedding dimension
+            if i == (self.mlp_layers - 1):
+                self.components['fcc_{}'.format(i)] = nn.Linear(in_features=x.shape[1],
+                    out_features=self.embedding_dimension)
+            else:
+                self.components['fcc_{}'.format(i)] = nn.Linear(in_features=x.shape[1],
+                        out_features=floor(x.shape[1]/layer_ratio))
+            
             x = self.components['fcc_{}'.format(i)](x)
 
             self.components['bn_{}'.format(i)] = nn.BatchNorm1d(x.shape[1])

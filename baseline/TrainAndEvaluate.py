@@ -15,7 +15,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 from torch.optim import Adam
-
+from itertools import chain
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -31,21 +31,23 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from matplotlib.font_manager import FontProperties
 from pytorch_memlab import MemReporter
+import inspect
+from baseline.gpu_mem_track import  MemTracker
 
 
 class TrainAndEvaluate:
 
     def __init__(self,hyperparameters,seed=0,**kwargs) -> None:
-        
+        print(hyperparameters)
         #setup matplotlib fonts
         self.prop = FontProperties(fname="NotoColorEmoji.tff")
         plt.rcParams['font.family'] = self.prop.get_family()
 
         #setup device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
         #setup memory reporter
         self.reporter = MemReporter()
+
 
         #setup random seed:
         self.rng = np.random.RandomState(seed=seed)
@@ -57,9 +59,12 @@ class TrainAndEvaluate:
             # access all HPs through wandb.config, so logging matches execution!
             self.config = wandb.config
             # make the model, data, and optimization problem
+
+
             self.make()
             # and use them to train the model
             torch.cuda.empty_cache()
+            self.reporter.report()
             self.train()
             # and test its final performance
             # self.evaluate(dataset='test')
@@ -70,10 +75,31 @@ class TrainAndEvaluate:
         self.train_loader = self.hyperparameters["dataloader"](data_set_type='train',**self.hyperparameters["dataloader_params"])
         self.test_loader = self.hyperparameters["dataloader"](data_set_type='test',**self.hyperparameters["dataloader_params"])
         self.val_loader = self.hyperparameters["dataloader"](data_set_type="val",**self.hyperparameters["dataloader_params"])
+        self.tiny_val_loader = self.hyperparameters["dataloader"](data_set_type="val",data_set_size = 4,
+                                                                    normalize = True,
+                                                                    balance = 0.5,
+                                                                    num_workers = 20,
+                                                                    data_splits = {"val":1.0 },
+                                                                    prefetch_factor=1,
+                                                                    batch_size = 4,
+                                                                    transforms = self.hyperparameters["transforms"],
+                                                                    shuffle=False)
+        self.tiny_filepaths = self.tiny_val_loader.dataset.same_ad_filenames + self.tiny_val_loader.dataset.diff_ad_filenames
+        
+        # self.tiny_filepaths = list(sum(self.tiny_filepaths, ()))
+        # Flatten list of tuples into list
+        # self.tiny_filepaths = [a for b in self.tiny_filepaths for b in a]
+        self.tiny_filepaths = list(chain.from_iterable(self.tiny_filepaths))
+        tiny_image_as, tiny_image_bs, _ = next(iter(self.tiny_val_loader)) 
+
+        # Flatten batch of image pairs to batch of single images
+        image_list = [torch.unsqueeze(x,0) for x in chain.from_iterable(zip(tiny_image_as,tiny_image_bs))]
+        self.tiny_batch = torch.cat(image_list)
 
         # Make the model
+
         self.model = self.hyperparameters["model"](**self.config)
-        self.model.to(self.device)
+
         # Make the loss and optimizer
         self.criterion = self.hyperparameters["criterion"](**self.hyperparameters)
         self.base_optimizer =  Adam(self.model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
@@ -115,7 +141,10 @@ class TrainAndEvaluate:
             self.current_epoch = epoch
             with tqdm(total=len(self.train_loader),ncols=120) as pbar_train:
                 for data in self.train_loader:
-                    torch.cuda.empty_cache() 
+                    torch.cuda.empty_cache()
+                    print(data[0].shape)
+                    print(data[1].shape)
+                    print(data[2].shape)
                     self.image_as, self.image_bs,labels = data[0].to(self.device),data[1].to(self.device),data[2].to(self.device)
 
                     loss,outputs = self.train_batch([self.image_as,self.image_bs,labels])
@@ -155,6 +184,9 @@ class TrainAndEvaluate:
         list_of_image_a_outputs = None
         list_of_image_b_outputs = None
         list_of_labels = None
+
+        #Visualise attention maps of the model
+        self.model.am_viz(self.tiny_batch, self.tiny_filepaths)
 
         loader = self.val_loader if dataset=="val" else self.test_loader
         with torch.no_grad():

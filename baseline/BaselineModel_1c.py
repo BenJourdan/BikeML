@@ -10,8 +10,8 @@ class BaselineModel_1c(nn.Module):
         self.input_shape = input_shape
         self.components = nn.ModuleDict() 
 
-        backbone = EmbeddingNetwork(self.input_shape, mlp_layers=3, embedding_dimension=128)
-        self.components["backbone"] = backbone
+        backbone = EmbeddingNetwork(self.input_shape, mlp_layers=3, embedding_dimension=128, **kwargs)
+        self.components["embedding"] = backbone
 
     @staticmethod
     def evaluate_batch(data, criterion, device, model):
@@ -31,9 +31,9 @@ class BaselineModel_1c(nn.Module):
     image_n : negative image
     """
     def forward(self,image_a,image_p,image_n):
-        out_a = self.components["backbone"](image_a)
-        out_p = self.components["backbone"](image_p)
-        out_n = self.components["backbone"](image_n)
+        out_a = self.components["embedding"](image_a)
+        out_p = self.components["embedding"](image_p)
+        out_n = self.components["embedding"](image_n)
         
         return out_a, out_p, out_n
 
