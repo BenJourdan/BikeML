@@ -13,29 +13,31 @@ from torchvision import transforms
 from torchvision.transforms import ToTensor, RandomHorizontalFlip,ColorJitter, RandomGrayscale
 
 base_config = dict(
-    epochs = 20,
+    epochs = 100,
     lr = 0.01,
     weight_decay = 0.000001,
     image_dim = 224,
-    starting_epoch = 9,
+    starting_epoch = 99,
     number_of_figures = 16,
     half_precision = False,
     train_backbone = True,
+    clear_redis = False,
+    viz_attention = True
 )
 
 dataloader_params = dict(
     data_set_size = 500000,
+    # data_set_size = 1000,
     data_splits = {"train":55/60,"val": 5/60,"test":5/60},
     normalize = True,
     balance = 0.5,
-    num_workers = 20,
+    num_workers = 32,
     prefetch_factor=1,
-    batch_size = 200,
+    batch_size = 1024,
     transforms = torchvision.transforms.Compose([
-                                                SquarePad(),
+                                                SquareCrop((base_config["image_dim"],base_config["image_dim"])),
                                                 Resize((base_config["image_dim"],base_config["image_dim"])),
                                                 ToTensor(),
-
                                                     ]),
 
 # def get_color_distortion(s=1.0):
@@ -48,8 +50,9 @@ dataloader_params = dict(
 #     rnd_gray])
 # return color_distort
 
-
-    root = "/scratch/datasets/raw/",
+    # root = "/scratch/datasets/raw/",
+    root = "/data_raid/raw/",
+    # root = "/scratch/datasets/detr_filtered/",
     shuffle=True,
     memory=True,
     half=False,
@@ -59,17 +62,21 @@ dataloader_params = dict(
 #Baseline_1a
 Baseline_1a_config = dict(
     model = BaselineModel_1a,
+    exp_name = 'testing ROC',
     dataloader = BikeDataLoader,
     criterion = nn.BCELoss,
     project_path = "./baseline_1a",
     input_shape = (dataloader_params["batch_size"], 3, base_config["image_dim"], base_config["image_dim"]),
     mlp_layers = 4,
+    eval=True,
+    tiny_transforms =dataloader_params["transforms"],
+    viz_attention = False
 )
 
 
 #Baseline_1b
 Baseline_1b_config = dict(
-    exp_name = 'messing with visualization 1b callums is a poo',
+    exp_name = 'Margin tuning: 0.9',
     model = BaselineModel_1b,
     dataloader = BikeDataLoader,
     criterion = SupervisedCosineContrastiveLoss,
@@ -84,9 +91,15 @@ Baseline_1b_config = dict(
                                             ColorJitter(0.8, 0.8, 0.8, 0.2),
                                             RandomGrayscale(p=0.2),
                                             ToTensor()
-                                                ])
+                                                ]),
+    tiny_transforms = torchvision.transforms.Compose([
+                                        SquareCrop((base_config["image_dim"],base_config["image_dim"])),
+                                        ColorJitter(0.8, 0.8, 0.8, 0.2),
+                                        RandomGrayscale(p=0.2),
+                                        ToTensor()
+                                            ])
 )
 
 hyperparameters = base_config
 hyperparameters["dataloader_params"] = dataloader_params
-hyperparameters.update(Baseline_1b_config)
+hyperparameters.update(Baseline_1a_config)

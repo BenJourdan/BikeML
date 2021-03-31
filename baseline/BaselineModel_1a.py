@@ -9,6 +9,9 @@ import os,sys
 sys.path.append("/scratch/GIT/BikeML")
 from baseline.Scaffold import Scaffold
 import wandb
+import scikitplot as skplt
+import numpy as np
+import matplotlib.pyplot as plt
 
 class ModelSnipper(nn.Module):
     def __init__(self, original_model,snip=1):
@@ -40,6 +43,7 @@ class BaselineModel_1a(Scaffold):
             for param in backbone.parameters():
                 param.requires_grad = False
         self.components["embedding"] = backbone
+        #should be "embedding"
 
         # Dims: batch no.(1) x image dims(3)
         out_x = backbone(x)
@@ -48,6 +52,7 @@ class BaselineModel_1a(Scaffold):
         xy = torch.cat((torch.flatten(out_x, start_dim=1, end_dim=-1),torch.flatten(out_y, start_dim=1, end_dim=-1)),dim=1)
 
         for i in range(self.mlp_layers):
+            # print(xy.shape[1],xy.shape[1]/2)
             self.components['fcc_{}'.format(i)] = nn.Linear(in_features=xy.shape[1],
                        out_features=floor(xy.shape[1]/2))
             xy = self.components['fcc_{}'.format(i)](xy)
@@ -57,7 +62,7 @@ class BaselineModel_1a(Scaffold):
             #relu goes here
 
         self.components["final_layer"] = nn.Linear(in_features=xy.shape[1],out_features=1)
-        
+        # print(xy.shape[1],1)
 
     def forward(self,image_a,image_b):
         out_x = self.components["embedding"](image_a)
@@ -83,6 +88,37 @@ class BaselineModel_1a(Scaffold):
                 item.reset_parameters()
             except:
                 pass
+
+    def track_metrics(self,outputs,epoch,step,criterion,loss,split="train"):
+        
+        if split=="train":
+            accuracy = ((outputs[0].round() == outputs[1]).sum()/outputs[1].shape[0])*100
+        else:
+            accuracy = ((outputs[0][0].round() == outputs[1]).sum()/outputs[1].shape[0])*100
+        wandb.log({"epoch": epoch, "{}_loss".format(split): float(loss),"global_step":epoch})
+        wandb.log({"epoch": epoch, "{}_accuracy".format(split): float(accuracy),"global_step":epoch})
+
+
+
+
+    def track_extra_metrics(self,list_of_outputs, epoch,split):
+        
+
+
+        predictions = list_of_outputs[0][0].numpy()
+        labels = list_of_outputs[1].numpy()
+        
+        fig,ax = plt.subplots(1,1,figsize=(7,7))
+
+        skplt.metrics.plot_roc_curve(labels.flatten(),np.hstack((1-predictions,predictions)),ax=ax,curves=("each_class"),text_fontsize="large")
+        ax.set_title("Test Set ROC Curve")
+        leg = ax.legend()
+        leg.remove()
+        ax.grid(axis="y",which="major")
+        wandb.log({f"ROC curve on {split} set":fig})
+        fig.savefig(f"roc_{split}.pdf")
+        plt.close(fig)
+
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

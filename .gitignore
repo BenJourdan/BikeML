@@ -7,3 +7,5 @@
 *.json
 *.tar
 *.png
+*.npz
+*.out

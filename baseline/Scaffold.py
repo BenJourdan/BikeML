@@ -48,7 +48,7 @@ class Scaffold(nn.Module):
         images_x, images_y, labels = data[0].to(device), data[1].to(device), data[2].to(device)
         outputs = model(images_x, images_y)
         loss = criterion(torch.squeeze(outputs), torch.squeeze(labels))
-        return loss, outputs, labels
+        return loss, outputs.cpu(), labels
 
     @staticmethod
     def evaluate_batch(data, criterion, device, model):
@@ -56,8 +56,8 @@ class Scaffold(nn.Module):
         outputs = model(images_x, images_y)
         loss = criterion(torch.squeeze(outputs), torch.squeeze(labels))  # compute loss
         predicted = torch.squeeze(torch.round(outputs.detach().cpu()))
-        accuracy = predicted.eq(torch.squeeze(labels).data).float().mean().cpu()
-        return loss.cpu().data.numpy(), accuracy, outputs
+        accuracy = predicted.eq(torch.squeeze(labels).data.cpu()).float().mean().cpu()
+        return loss.cpu().data.numpy(), accuracy, [outputs.cpu(),outputs.cpu()]
 
     @staticmethod
     def track_metrics(outputs, epoch, split):
@@ -85,12 +85,19 @@ class Scaffold(nn.Module):
             fig.suptitle(f'Performance at epoch {epoch}: figure {j}', fontsize=20)
             # plt.tight_layout()
             wandb.log({f"examples_{j}":fig})
+            fig.savefig("roc.pdf")
             plt.close(fig)
                     
     def am_viz(self, image_batch, filepaths):
+        resnet = None
+        features = None
+        try:
+            resnet = self.components["embedding"].components["backbone"]
+            features = self.components["embedding"].components["backbone"].features
+        except:
+            resnet = self.components["embedding"]
+            features = self.components["embedding"].features
 
-        resnet = self.components["embedding"].components["backbone"]
-        features = self.components["embedding"].components["backbone"].features
         blocks_per_layer = [len(features.layer1), len(features.layer2), len(features.layer3), len(features.layer4)]
 
         model = ResNetAT(Bottleneck if any([isinstance(m, Bottleneck) for m in features.modules()]) else BasicBlock, blocks_per_layer)

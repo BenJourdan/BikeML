@@ -29,7 +29,7 @@ class BaselineModel_1b(Scaffold):
         vector_2 = outputs[1]
 
         loss = criterion(torch.squeeze(vector_1), torch.squeeze(vector_2), target=torch.squeeze(labels))
-        return loss, [vector_1,vector_2], labels
+        return loss, [vector_1.detach().cpu(),vector_2.detach().cpu()], labels
     
     @staticmethod
     def evaluate_batch(data, criterion, device, model):
@@ -94,17 +94,16 @@ class BaselineModel_1b(Scaffold):
         neg_sq_dist = criterion.embedding_dist(embd_neg_a,embd_neg_b)
         
         if split=="train":
-            wandb.log({"epoch": epoch, "loss": float(loss)}, step=step)
+            wandb.log({"epoch": epoch, "{}_loss".format(split): float(loss)}, step=step)
             wandb.log({"{}_avg_intra_ad_dist".format(split): pos_sq_dist},step=step) # intra Ad distance
             wandb.log({"{}_avg_inter_ad_dist".format(split): neg_sq_dist},step=step) # inter Ad distance
             wandb.log({"{}_inter/intra_ad_dist_ratio".format(split): neg_sq_dist/pos_sq_dist},step=step)
         else:
-            wandb.log({"epoch": epoch, "loss": float(loss),"global_step":epoch})
+            wandb.log({"epoch": epoch, "{}_loss": float(loss),"global_step":epoch})
             wandb.log({"{}_avg_intra_ad_dist".format(split): pos_sq_dist,"global_step":epoch}) # intra Ad distance
             wandb.log({"{}_avg_inter_ad_dist".format(split): neg_sq_dist,"global_step":epoch}) # inter Ad distance
             wandb.log({"{}_inter/intra_ad_dist_ratio".format(split): neg_sq_dist/pos_sq_dist,"global_step":epoch})
 
-        
     def reset_parameters(self):
         """
         Re-initialize the network parameters.

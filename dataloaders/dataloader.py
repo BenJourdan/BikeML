@@ -276,6 +276,7 @@ class BikeDataset(Dataset):
             image_a =  image_a.float()
             image_b = image_b.float()
 
+
         return image_a,image_b,label
 
 
@@ -382,7 +383,7 @@ class BikeDataset(Dataset):
 
         # Check that the number of different pairs requested is not larger than the dataset
         if self.num_diff_ad > n/2:
-            raise ValueError('num_diff_ad variable ({}) exceeds the number of different-ad images ({})'.format(self.num_diff_ad,n))
+            raise ValueError('num_diff_ad variable ({}) exceeds the number of different-ad images ({})'.format(self.num_diff_ad,n/2))
 
         for i in range(self.num_diff_ad):
             global_idx_1 = 0
@@ -455,15 +456,15 @@ class BikeDataLoader(DataLoader):
         self.base_path = root
         if data_set_type == 'train':
             cache_dir = join(root,f"cache_train")
-            root = "/scratch/datasets/raw/train"
+            root = join(root,"train")
             data_set_size *= data_splits['train']
         elif data_set_type == 'val':
             cache_dir = join(root,f"cache_val")
-            root = "/scratch/datasets/raw/val"
+            root = join(root,"val")
             data_set_size *= data_splits['val']
         elif data_set_type == 'test':
             cache_dir = join(root,f"cache_test")
-            root = "/scratch/datasets/raw/test"
+            root = join(root,"test")
             data_set_size *= data_splits['test']
 
         if normalize:
@@ -475,7 +476,7 @@ class BikeDataLoader(DataLoader):
 
         if normalize:
             # self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,pre_norm_transforms=torchvision.transforms.Compose([transforms,self.NormalizerForward]),norm_transform=torchvision.transforms.Compose([self.NormalizerBackward]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
-            self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,self.Normalizer,AddGaussianNoise(0., 5.)]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
+            self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms,self.Normalizer]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
         else:
             self.dataset = BikeDataset(root,data_set_type,data_set_size,balance,transforms=torchvision.transforms.Compose([transforms]),cache_dir=cache_dir,half=half,memory=memory,**kwargs)
         super().__init__(self.dataset,batch_size=batch_size,shuffle=shuffle,
@@ -506,6 +507,8 @@ class BikeDataLoader(DataLoader):
             with open(join(cache_dir,"normalization.txt"),"w") as f:
                 f.write(",".join(means)+"\n"+",".join(stds)+"\n")
 
+        #load them again:
+        self.load_normalization_constants()
     def load_normalization_constants(self,cache_dir="./cache"):
         with open(join(cache_dir,"normalization.txt"),"r") as f:
             data = [[float(x) for x in line.strip("\n").split(",")] for line in f.readlines()]
@@ -517,7 +520,7 @@ class BikeDataLoader(DataLoader):
         redis.execute_command("FLUSHALL ASYNC")
 
 if __name__ == "__main__":
-    torch.manual_seed(0)
+    # torch.manual_seed(0)
 
     # dataloader = BikeDataLoader(data_set_type="train",data_set_size=100000,balance=0.5,normalize=True,prefetch_factor=1,batch_size=256,num_workers=28,
     #                             transforms = torchvision.transforms.Compose([
@@ -527,22 +530,18 @@ if __name__ == "__main__":
     #                                             memory=True,
     #                                             image_dim=512,
     #                                             memory_dump_path="/data_raid/memory_dump",pin_memory=False)
-    dataloader = BikeDataLoader(data_set_type="train",data_set_size=100000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=32,
+    dataloader = BikeDataLoader(root = "/data_raid/raw/",data_set_type="train",data_set_size=100000,balance=0.5,normalize=False,prefetch_factor=1,batch_size=256,num_workers=32,
                                         transforms = torchvision.transforms.Compose([
-                                            SquareCrop((512,512)),
-                                            RandomHorizontalFlip(p=0.5),
-                                            ColorJitter(0.8, 0.8, 0.8, 0.2),
-                                            RandomGrayscale(p=0.2),
-                                            # AddGaussianNoise(0., 5.),
+                                            SquareCrop((224,224)),
                                             ToTensor()
                                                 ]),
                                                     memory=False,
-                                                    image_dim=256,
+                                                    image_dim=512,
                                                     half=False,
                                                     pin_memory=False)
-    # dataloader.flush_redis()
-    # dataloader.compute_normalization_constants()
     dataloader.flush_redis()
-    for _ in range(2):
-        for i,batch in enumerate(tqdm(dataloader)):
-            a,b,l = batch
+    dataloader.compute_normalization_constants()
+    # dataloader.flush_redis()
+    # for _ in range(2):
+    #     for i,batch in enumerate(tqdm(dataloader)):
+    #         a,b,l = batch

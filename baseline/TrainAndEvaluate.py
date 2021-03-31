@@ -6,7 +6,7 @@ sys.path.append("/scratch/GIT/BikeML")
 from baseline.BaselineModel_1b import BaselineModel_1b
 from config import hyperparameters
 from baseline.experiment_building import ExperimentBuilder
-from baseline.analysis import UnNormalize
+
 from baseline.BaselineModel_1a import BaselineModel_1a
 from os.path import join
 from dataloaders.dataloader import BikeDataLoader
@@ -35,16 +35,35 @@ import inspect
 from baseline.gpu_mem_track import  MemTracker
 
 
+class UnNormalize(object):
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, tensor):
+        """
+        Args:
+            tensor (Tensor): Tensor image of size (C, H, W) to be normalized.
+        Returns:
+            Tensor: Normalized image.
+        """
+        for t, m, s in zip(tensor, self.mean, self.std):
+            t.mul_(s).add_(m)
+            # The normalize code -> t.sub_(m).div_(s)
+        return tensor
+
 class TrainAndEvaluate:
 
-    def __init__(self,hyperparameters,seed=0,**kwargs) -> None:
+    def __init__(self,hyperparameters,seed=0,eval=False,**kwargs) -> None:
         print(hyperparameters)
         #setup matplotlib fonts
         self.prop = FontProperties(fname="NotoColorEmoji.tff")
         plt.rcParams['font.family'] = self.prop.get_family()
+        self.eval=eval
 
         #setup device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device= torch.device("cpu")
         #setup memory reporter
         self.reporter = MemReporter()
 
@@ -65,25 +84,45 @@ class TrainAndEvaluate:
             # and use them to train the model
             torch.cuda.empty_cache()
             self.reporter.report()
-            self.train()
+            if self.eval==False:
+                self.train()
+            print("testing:")
+            self.evaluate(dataset='test')
             # and test its final performance
-            # self.evaluate(dataset='test')
             return self.model 
 
     def make(self):
         # Make the data
         self.train_loader = self.hyperparameters["dataloader"](data_set_type='train',**self.hyperparameters["dataloader_params"])
+
+        
         self.test_loader = self.hyperparameters["dataloader"](data_set_type='test',**self.hyperparameters["dataloader_params"])
         self.val_loader = self.hyperparameters["dataloader"](data_set_type="val",**self.hyperparameters["dataloader_params"])
-        self.tiny_val_loader = self.hyperparameters["dataloader"](data_set_type="val",data_set_size = 4,
+        self.tiny_val_loader = self.hyperparameters["dataloader"](root=self.hyperparameters["dataloader_params"]["root"],data_set_type="val",data_set_size = 4,
                                                                     normalize = True,
                                                                     balance = 0.5,
                                                                     num_workers = 20,
                                                                     data_splits = {"val":1.0 },
                                                                     prefetch_factor=1,
                                                                     batch_size = 4,
-                                                                    transforms = self.hyperparameters["transforms"],
+                                                                    transforms = self.hyperparameters["tiny_transforms"],
                                                                     shuffle=False)
+        
+        for name,loader in zip(["train","val","test"],[self.train_loader,self.val_loader,self.test_loader]):
+            print(f"{name} loader stats:\t number of pairs: {len(loader.dataset)}\t")
+            print(f"number of positive pairs: \t {loader.dataset.num_same_ad}")
+            print(f"number of negative pairs: \t {loader.dataset.num_diff_ad}")
+            print(f"number of Ads used: \t {len(loader.dataset.ad_to_img.keys())}")
+            print("#"*5)
+
+        print(f"Training set size: {len(self.train_loader.dataset)}")
+
+  
+        if self.hyperparameters["clear_redis"] == True:
+            print("flushing redis. Expect a slower first epoch :(")
+            self.train_loader.flush_redis()
+
+        #filepaths to small batch of images to vizualise the backbone layer outputs
         self.tiny_filepaths = self.tiny_val_loader.dataset.same_ad_filenames + self.tiny_val_loader.dataset.diff_ad_filenames
         
         # self.tiny_filepaths = list(sum(self.tiny_filepaths, ()))
@@ -101,7 +140,10 @@ class TrainAndEvaluate:
         self.model = self.hyperparameters["model"](**self.config)
 
         # Make the loss and optimizer
-        self.criterion = self.hyperparameters["criterion"](**self.hyperparameters)
+        try:
+            self.criterion = self.hyperparameters["criterion"](**self.hyperparameters)
+        except:
+            self.criterion = self.hyperparameters["criterion"]()
         self.base_optimizer =  Adam(self.model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
        
         # load weights and optimizer state if continuing:
@@ -142,9 +184,6 @@ class TrainAndEvaluate:
             with tqdm(total=len(self.train_loader),ncols=120) as pbar_train:
                 for data in self.train_loader:
                     torch.cuda.empty_cache()
-                    print(data[0].shape)
-                    print(data[1].shape)
-                    print(data[2].shape)
                     self.image_as, self.image_bs,labels = data[0].to(self.device),data[1].to(self.device),data[2].to(self.device)
 
                     loss,outputs = self.train_batch([self.image_as,self.image_bs,labels])
@@ -169,8 +208,12 @@ class TrainAndEvaluate:
         loss.backward()
         self.optimizer.step(epoch=self.current_epoch)
         self.base_optimizer.step()
-        return loss.detach().item(),[[outputs[0].detach().cpu(),outputs[1].detach().cpu()],labels.detach().cpu()]
-
+        if self.hyperparameters["model"] == BaselineModel_1b:
+            return loss.detach().item(),[[outputs[0].detach().cpu(),outputs[1].detach().cpu()],labels.detach().cpu()]
+        elif self.hyperparameters["model"] == BaselineModel_1a:
+            return loss.detach().item(),[outputs,labels.detach().cpu()]
+        else:
+            raise Exception("Splat")
     def evaluate(self,dataset="val",epoch=None):
 
         path=self.config.project_path
@@ -186,7 +229,8 @@ class TrainAndEvaluate:
         list_of_labels = None
 
         #Visualise attention maps of the model
-        self.model.am_viz(self.tiny_batch, self.tiny_filepaths)
+        if self.hyperparameters["viz_attention"]:
+            self.model.am_viz(self.tiny_batch, self.tiny_filepaths)
 
         loader = self.val_loader if dataset=="val" else self.test_loader
         with torch.no_grad():
@@ -199,11 +243,12 @@ class TrainAndEvaluate:
                     list_of_image_a_outputs = outputs[0].cpu()
                     list_of_image_b_outputs = outputs[1].cpu()
                     list_of_labels = data[2].cpu()
-                    self.model.visualize(data,
-                                            outputs,
-                                            epoch,
-                                            number_of_figures=self.hyperparameters["number_of_figures"],
-                                            unNormalizer = UnNormalize(loader.means,loader.stds))
+                    if self.hyperparameters["model"] == BaselineModel_1a:
+                        self.model.visualize(data,
+                                                outputs[0],
+                                                epoch,
+                                                number_of_figures=self.hyperparameters["number_of_figures"],
+                                                unNormalizer = UnNormalize(loader.means,loader.stds))
                     viz_flag =False
                 else:
                     list_of_image_a_outputs = torch.cat((list_of_image_a_outputs, outputs[0].cpu()), 0)
@@ -249,6 +294,6 @@ class TrainAndEvaluate:
 if __name__ == "__main__":
     wandb.login()
     
-    experiment = TrainAndEvaluate(hyperparameters)
+    experiment = TrainAndEvaluate(hyperparameters,eval=True)
 
     model = experiment.run()

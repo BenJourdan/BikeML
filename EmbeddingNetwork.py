@@ -71,11 +71,13 @@ class EmbeddingNetwork(nn.Module):
             
             #enforce the final layer to have the correct embedding dimension
             if i == (self.mlp_layers - 1):
+                print(x.shape[1],self.embedding_dimension)
                 self.components['fcc_{}'.format(i)] = nn.Linear(in_features=x.shape[1],
                     out_features=self.embedding_dimension)
             else:
                 self.components['fcc_{}'.format(i)] = nn.Linear(in_features=x.shape[1],
                         out_features=floor(x.shape[1]/layer_ratio))
+                print(x.shape[1],floor(x.shape[1]/layer_ratio))
             
             x = self.components['fcc_{}'.format(i)](x)
 
